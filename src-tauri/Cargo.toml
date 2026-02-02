@@ -13,9 +13,38 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi"] }
+# Windows API bindings
+[dependencies.windows]
+version = "0.58"
+features = [
+  # Core
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Gdi",
+  # Media Session (for now playing info)
+  "Media_Control",
+  # Audio (for volume control + device enumeration)
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_Devices_Properties",
+  # Property Store for device friendly names
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_Devices_FunctionDiscovery",
+  # Brightness control (DDC/CI for monitors)
+  "Win32_Devices_Display",
+  # Async support
+  "Foundation",
+  "Foundation_Collections",
+  "implement",
+  # Notifications (includes UserNotification.AppInfo -> need ApplicationModel for DisplayInfo)
+  "UI_Notifications",
+  "UI_Notifications_Management",
+  "ApplicationModel",
+]

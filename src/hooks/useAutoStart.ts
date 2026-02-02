@@ -1,0 +1,66 @@
+import { useState, useEffect, useCallback } from "react";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface UseAutoStartReturn {
+  isEnabled: boolean;
+  isLoading: boolean;
+  setEnabled: (enabled: boolean) => Promise<void>;
+  refresh: () => Promise<void>;
+}
+
+// Tauri invoke helper - Tauri v2 uses window.__TAURI__.core.invoke
+const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
+  if (!(window as any).__TAURI__?.core?.invoke) return null;
+  try {
+    return await (window as any).__TAURI__.core.invoke(cmd, args) as T;
+  } catch (e) {
+    console.error(`Tauri invoke failed (${cmd}):`, e);
+    return null;
+  }
+};
+
+// =============================================================================
+// Hook
+// =============================================================================
+
+export function useAutoStart(): UseAutoStartReturn {
+  const [isEnabled, setIsEnabled] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Check autostart status
+  const checkStatus = useCallback(async () => {
+    const result = await tauriInvoke<boolean>("check_autostart_enabled");
+    if (result !== null) {
+      setIsEnabled(result);
+    }
+    setIsLoading(false);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setIsLoading(true);
+    await checkStatus();
+  }, [checkStatus]);
+
+  // Enable or disable autostart
+  const setEnabled = useCallback(async (enabled: boolean) => {
+    setIsLoading(true);
+    await tauriInvoke("set_autostart_enabled", { enabled });
+    setIsEnabled(enabled);
+    setIsLoading(false);
+  }, []);
+
+  // Initial check on mount
+  useEffect(() => {
+    checkStatus();
+  }, [checkStatus]);
+
+  return {
+    isEnabled,
+    isLoading,
+    setEnabled,
+    refresh,
+  };
+}

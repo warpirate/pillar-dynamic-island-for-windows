@@ -45,15 +45,62 @@ export const pillDimensions = {
     height: 36,
     borderRadius: 18,
   },
+  // Wider idle state when notifications are present
+  idleWithNotifications: {
+    width: 170,
+    height: 36,
+    borderRadius: 18,
+  },
   hover: {
     width: 160,
     height: 40,
     borderRadius: 20,
   },
+  // Wider hover state when notifications are present
+  hoverWithNotifications: {
+    width: 200,
+    height: 40,
+    borderRadius: 20,
+  },
   expanded: {
-    width: 360,
-    height: 220,
+    width: 380,
+    height: 280,
     borderRadius: 28,
+  },
+};
+
+// Notification animation configurations
+export const notificationAnimations = {
+  // Toast appearing below pill
+  toast: {
+    initial: { y: 50, opacity: 0, scale: 0.8 },
+    animate: { y: 0, opacity: 1, scale: 1 },
+    exit: { y: -30, opacity: 0, scale: 0.5 },
+  },
+  // Badge appearing in pill
+  badge: {
+    initial: { scale: 0, opacity: 0 },
+    animate: { scale: 1, opacity: 1 },
+    exit: { scale: 0, opacity: 0 },
+  },
+  // Pulse effect for new notifications
+  pulse: {
+    scale: [1, 1.15, 1],
+    transition: { duration: 0.3 },
+  },
+  // Spring config for notification animations
+  spring: {
+    type: "spring" as const,
+    stiffness: 400,
+    damping: 30,
+    mass: 0.8,
+  },
+  // Gentler spring for absorption animation
+  absorptionSpring: {
+    type: "spring" as const,
+    stiffness: 300,
+    damping: 25,
+    mass: 1,
   },
 };
 

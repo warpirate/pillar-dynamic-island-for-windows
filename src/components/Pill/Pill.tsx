@@ -1,12 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, useSpring, useTransform, AnimatePresence } from "motion/react";
 import { usePillState } from "../../hooks/usePillState";
+import { useTimer } from "../../hooks/useTimer";
+import { useMediaSession } from "../../hooks/useMediaSession";
+import { useVolume } from "../../hooks/useVolume";
+import { useAutoStart } from "../../hooks/useAutoStart";
+import { useBrightness } from "../../hooks/useBrightness";
+import { useAudioDevices } from "../../hooks/useAudioDevices";
+import { usePerAppMixer } from "../../hooks/usePerAppMixer";
+import { useNotifications } from "../../hooks/useNotifications";
+import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { springConfig, pillDimensions, bootAnimationDuration } from "./animations";
+import { TimerExpanded } from "./modules/TimerModule";
+import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
+import { QuickSettings } from "./modules/VolumeModule";
+import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
+
+// Tab type for expanded view
+type ExpandedTab = "timer" | "media" | "notifications" | "settings";
 
 declare global {
   interface Window {
     __TAURI__?: {
-      invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      core: {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
     };
   }
 }
@@ -36,26 +54,118 @@ export function Pill() {
     handleClick,
     handleClickOutside,
     completeBootAnimation,
+    // Content state API
+    backgroundStates,
+    setTimerState,
+    setTimerAlert,
   } = usePillState();
+
+  // Timer hook
+  const {
+    timer,
+    presets,
+    startTimer,
+    pauseTimer,
+    resumeTimer,
+    stopTimer,
+    dismissAlert,
+    formatTime,
+    progress: timerProgress,
+  } = useTimer(
+    // On timer update - sync to content state
+    (timerState) => {
+      if (timerState.isActive) {
+        setTimerState({
+          label: timerState.label,
+          totalSeconds: timerState.totalSeconds,
+          remainingSeconds: timerState.remainingSeconds,
+          isPaused: timerState.isPaused,
+        });
+      } else if (!timerState.isComplete) {
+        setTimerState(null);
+      }
+    },
+    // On timer complete - show alert
+    (label) => {
+      setTimerState(null);
+      setTimerAlert({ label, completedAt: Date.now() });
+    }
+  );
+
+  // Dismiss timer alert
+  const handleDismissAlert = () => {
+    dismissAlert();
+    setTimerAlert(null);
+  };
+
+  // Media session hook
+  const {
+    media,
+    playPause,
+    next: mediaNext,
+    previous: mediaPrevious,
+  } = useMediaSession(3000); // Poll every 3 seconds
+
+  // Volume hook
+  const {
+    volume,
+    setVolume,
+    toggleMute,
+  } = useVolume(5000); // Poll every 5 seconds
+
+  // Auto-start hook
+  const {
+    isEnabled: autoStartEnabled,
+    setEnabled: setAutoStartEnabled,
+  } = useAutoStart();
+
+  // Brightness hook
+  const {
+    brightness,
+    setBrightness,
+  } = useBrightness(10000); // Poll every 10 seconds
+
+  // Audio devices hook
+  const {
+    devices: audioDevices,
+    defaultDevice: defaultAudioDevice,
+  } = useAudioDevices(5000); // Poll every 5 seconds
+
+  // Per-app mixer hook
+  const {
+    sessions: audioSessions,
+    setSessionVolume,
+    setSessionMute,
+  } = usePerAppMixer(3000); // Poll every 3 seconds
+
+  // Notifications hook
+  const {
+    notifications,
+    hasAccess: hasNotificationAccess,
+    latestNotification,
+    notificationPhase,
+    isNewNotification,
+    dismissNotification,
+    clearLatest: clearLatestNotification,
+  } = useNotifications(5000); // Poll every 5 seconds
+  
+  // Whether to show notification badge in the pill
+  const hasNotificationBadge = notifications.length > 0 && 
+    (notificationPhase === "showing" || notificationPhase === "idle");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [bootPhase, setBootPhase] = useState<"dot" | "morph" | "complete">("dot");
+  const [activeTab, setActiveTab] = useState<ExpandedTab>("timer");
   const [time, setTime] = useState(getTimeString);
   const [dateStr, setDateStr] = useState(getDateString);
   const [seconds, setSeconds] = useState(getSecondsString);
 
-  // Determine if clock should be active (visible states only)
-  const shouldTickClock = !isBooting && !isIdle;
+  // Clock ticks whenever pill is shown (after boot) so time is always correct
+  // Pause only when document is hidden (window minimized) to save CPU
+  const shouldTickClock = !isBooting;
 
-  // OPTIMIZATION: Only tick clock when pill is visible (hover or expanded)
-  // When idle, clock is paused = zero CPU usage
   useEffect(() => {
     if (!shouldTickClock) return;
-
-    // Immediately update time when becoming visible
-    setTime(getTimeString());
-    setDateStr(getDateString());
-    setSeconds(getSecondsString());
 
     const tick = () => {
       setTime(getTimeString());
@@ -63,9 +173,33 @@ export function Pill() {
       setSeconds(getSecondsString());
     };
 
+    // Initial sync
+    tick();
+
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [shouldTickClock]);
+
+  // When app becomes visible again, sync time immediately
+  useEffect(() => {
+    if (!shouldTickClock) return;
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        setTime(getTimeString());
+        setDateStr(getDateString());
+        setSeconds(getSecondsString());
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [shouldTickClock]);
+
+  // Determine what to show based on active content state
+  const hasTimerActive = timer.isActive || timer.isComplete;
+  const hasTimerAlert = timer.isComplete;
+  const hasMediaPlaying = media?.isPlaying ?? false;
+  const showTimerInIdle = hasTimerActive && !isExpanded;
+  const showMediaInIdle = hasMediaPlaying && !hasTimerActive && !isExpanded;
 
   // Snappy spring so hover-in and unhover-out feel the same
   const pillSpring = springConfig.snappy;
@@ -116,20 +250,28 @@ export function Pill() {
     sequence();
   }, [isBooting, width, height, borderRadius, blurAmount, shadowOpacity, completeBootAnimation]);
 
-  // Update dimensions based on state
+  // Update dimensions based on state (including notification badge)
   useEffect(() => {
     if (isBooting) return;
 
     if (isIdle) {
-      width.set(pillDimensions.idle.width);
-      height.set(pillDimensions.idle.height);
-      borderRadius.set(pillDimensions.idle.borderRadius);
+      // Use wider dimensions when notifications are present
+      const dims = hasNotificationBadge 
+        ? pillDimensions.idleWithNotifications 
+        : pillDimensions.idle;
+      width.set(dims.width);
+      height.set(dims.height);
+      borderRadius.set(dims.borderRadius);
       blurAmount.set(8);
       shadowOpacity.set(0.2);
     } else if (isHovering) {
-      width.set(pillDimensions.hover.width);
-      height.set(pillDimensions.hover.height);
-      borderRadius.set(pillDimensions.hover.borderRadius);
+      // Use wider dimensions when notifications are present
+      const dims = hasNotificationBadge 
+        ? pillDimensions.hoverWithNotifications 
+        : pillDimensions.hover;
+      width.set(dims.width);
+      height.set(dims.height);
+      borderRadius.set(dims.borderRadius);
       blurAmount.set(12);
       shadowOpacity.set(0.25);
     } else if (isExpanded) {
@@ -139,23 +281,22 @@ export function Pill() {
       blurAmount.set(16);
       shadowOpacity.set(0.35);
     }
-  }, [isBooting, isIdle, isHovering, isExpanded, width, height, borderRadius, blurAmount, shadowOpacity]);
+  }, [isBooting, isIdle, isHovering, isExpanded, hasNotificationBadge, width, height, borderRadius, blurAmount, shadowOpacity]);
 
-  // Enable/disable click-through based on state
+  // Keep window always receiving clicks so the pill is clickable.
+  // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
   useEffect(() => {
     const setClickThrough = async (ignore: boolean) => {
       if (window.__TAURI__) {
         try {
-          await window.__TAURI__.invoke("set_click_through", { ignore });
+          await window.__TAURI__.core.invoke("set_click_through", { ignore });
         } catch (e) {
           console.error("Failed to set click through:", e);
         }
       }
     };
-
-    // Click-through only when idle
-    setClickThrough(isIdle);
-  }, [isIdle]);
+    setClickThrough(false);
+  }, []);
 
   // Resize and re-center window when expanded (desktop: keeps pill visible and top-centered)
   useEffect(() => {
@@ -165,7 +306,7 @@ export function Pill() {
           const dims = isExpanded ? pillDimensions.expanded : pillDimensions.idle;
           const w = dims.width + 60;
           const h = dims.height + 100;
-          await window.__TAURI__.invoke("resize_and_center", { width: w, height: h });
+          await window.__TAURI__.core.invoke("resize_and_center", { width: w, height: h });
         } catch (e) {
           console.error("Failed to resize/position window:", e);
         }
@@ -249,29 +390,107 @@ export function Pill() {
         }}
       />
 
-      {/* Time - show when pill is idle or hover, OnePlus-style: first digit red, rest white */}
+      {/* Timer progress ring around pill (when timer active in idle/hover) */}
+      {showTimerInIdle && (
+        <TimerMiniProgress 
+          progress={timerProgress} 
+          width={width}
+          height={height}
+        />
+      )}
+
+      {/* Background state indicators */}
+      {backgroundStates.length > 0 && !isExpanded && (
+        <StateIndicators states={backgroundStates} position="right" />
+      )}
+
+      {/* Notification toast (appears BELOW pill, then animates into badge) */}
+      {!isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && latestNotification && (
+        <div className="absolute top-full mt-3 left-1/2 -translate-x-1/2">
+          <NotificationToast
+            notification={latestNotification}
+            onDismiss={clearLatestNotification}
+            phase={notificationPhase}
+          />
+        </div>
+      )}
+
+      {/* Idle/Hover Content */}
       {!isBooting && !isExpanded && (
         <div
-          className="absolute inset-0 flex items-center justify-center pointer-events-none select-none"
+          className="absolute inset-0 flex items-center pointer-events-none select-none px-4"
           style={{
             fontVariantNumeric: "tabular-nums",
             fontSize: "17px",
             fontWeight: 600,
-            letterSpacing: "0.06em",
+            letterSpacing: "0.02em",
           }}
         >
-          {time.length > 0 ? (
-            <>
-              <span style={{ color: "#EB0028", textShadow: "0 0 10px rgba(235, 0, 40, 0.5)" }}>
-                {time[0]}
+          {/* Left side: Media indicator or spacer */}
+          <div className="flex items-center flex-shrink-0">
+            {showMediaInIdle && (
+              <MediaIndicator isPlaying={true} />
+            )}
+          </div>
+
+          {/* Center: Time and timer - flex-1 + justify-center so time stays centered when no left/right content */}
+          <div className="flex items-center justify-center gap-2 flex-1 min-w-0">
+            {/* Timer display when active */}
+            {hasTimerActive && !hasTimerAlert && (
+              <span 
+                className="text-green-400"
+                style={{ textShadow: "0 0 8px rgba(34, 197, 94, 0.4)" }}
+              >
+                {formatTime(timer.remainingSeconds)}
               </span>
-              <span style={{ color: "#ffffff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>
-                {time.slice(1)}
+            )}
+            
+            {/* Timer alert pulsing indicator */}
+            {hasTimerAlert && (
+              <motion.span 
+                className="text-red-400"
+                animate={{ opacity: [1, 0.5, 1] }}
+                transition={{ duration: 1, repeat: Infinity }}
+                style={{ textShadow: "0 0 8px rgba(239, 68, 68, 0.5)" }}
+              >
+                Done!
+              </motion.span>
+            )}
+            
+            {/* Time display - single block so no gap between first digit and rest */}
+            {!hasTimerAlert && (
+              <span
+                className="inline-flex items-baseline"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {time.length > 0 ? (
+                  <>
+                    <span style={{ color: "#EB0028", textShadow: "0 0 10px rgba(235, 0, 40, 0.5)" }}>
+                      {time[0]}
+                    </span>
+                    <span style={{ color: "#ffffff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>
+                      {time.slice(1)}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: "#ffffff" }}>{time}</span>
+                )}
               </span>
-            </>
-          ) : (
-            <span style={{ color: "#ffffff" }}>{time}</span>
-          )}
+            )}
+          </div>
+
+          {/* Right side: Notification badge - flex-shrink-0 so center keeps remaining space */}
+          <div className="flex items-center justify-end flex-shrink-0">
+            <AnimatePresence mode="popLayout">
+              {hasNotificationBadge && notifications.length > 0 && (
+                <NotificationIndicator
+                  count={notifications.length}
+                  appName={notifications[0]?.appName || "App"}
+                  isNew={isNewNotification}
+                />
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       )}
 
@@ -279,53 +498,151 @@ export function Pill() {
       <AnimatePresence>
         {isExpanded && (
           <motion.div
-            className="absolute inset-0 flex flex-col p-5"
+            className="absolute inset-0 flex flex-col p-3"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
           >
-            {/* Header row */}
-            <div className="flex items-center gap-3 mb-4">
-              {/* Icon */}
-              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center">
-                <span className="text-white/90 text-sm font-bold">P</span>
-              </div>
-              
-              {/* Title area */}
-              <div className="flex flex-col">
-                <span className="text-white/90 text-base font-semibold">PILLAR</span>
-                <span className="text-white/40 text-xs">v0.1.0</span>
-              </div>
-            </div>
-
-            {/* Main content - Clock display */}
-            <div className="flex-1 flex flex-col justify-center gap-1 min-h-[80px]">
-              <div className="flex items-baseline gap-2" style={{ fontVariantNumeric: "tabular-nums" }}>
-                <span className="text-3xl font-semibold text-white tracking-tight">{time}</span>
-                {/* Seconds with roll-up animation */}
-                <div className="relative h-5 overflow-hidden" style={{ minWidth: "1.5rem" }}>
-                  <AnimatePresence mode="popLayout" initial={false}>
-                    <motion.span
-                      key={seconds}
-                      className="absolute inset-x-0 bottom-0 text-sm text-white/40"
-                      initial={{ y: "100%" }}
-                      animate={{ y: 0 }}
-                      exit={{ y: "-100%" }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                    >
-                      :{seconds}
-                    </motion.span>
-                  </AnimatePresence>
+            {/* Header row with time - time as single unit */}
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center flex-shrink-0">
+                  <span className="text-white/90 text-[9px] font-bold">P</span>
                 </div>
+                <span className="text-white/70 text-[11px] font-medium">PILLAR</span>
               </div>
-              <span className="text-white/50 text-sm">{dateStr}</span>
+
+              <span
+                className="text-xs font-medium text-white/70 tabular-nums"
+                style={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {time}:{seconds}
+              </span>
             </div>
 
-            {/* Status indicator - minimal, no dead buttons */}
-            <div className="flex items-center justify-center gap-2 text-white/30 text-xs">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500/60" />
-              <span>Idle</span>
+            {/* Tab Navigation */}
+            <div className="flex gap-0.5 mb-2 p-0.5 bg-white/5 rounded-lg">
+              {[
+                { id: "timer" as const, label: "Timer", icon: "⏱" },
+                { id: "media" as const, label: "Media", icon: "🎵" },
+                { id: "notifications" as const, label: "Notifs", icon: "🔔", badge: notifications.length > 0 ? notifications.length : undefined },
+                { id: "settings" as const, label: "Settings", icon: "⚙" },
+              ].map(tab => (
+                <motion.button
+                  key={tab.id}
+                  className={`relative flex-1 py-1 px-0.5 rounded-md text-[10px] font-medium transition-colors ${
+                    activeTab === tab.id 
+                      ? "bg-white/15 text-white" 
+                      : "text-white/40 hover:text-white/60"
+                  }`}
+                  onClick={() => setActiveTab(tab.id)}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <span className="mr-0.5">{tab.icon}</span>
+                  {tab.label}
+                  {'badge' in tab && tab.badge && (
+                    <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full text-[8px] text-white flex items-center justify-center">
+                      {tab.badge > 9 ? "9+" : tab.badge}
+                    </span>
+                  )}
+                </motion.button>
+              ))}
+            </div>
+
+            {/* Main content area - Tabbed modules */}
+            <div className="flex-1 flex flex-col justify-center min-h-0 overflow-hidden py-0.5 overflow-y-auto">
+              <AnimatePresence mode="wait">
+                {activeTab === "timer" && (
+                  <motion.div
+                    key="timer"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <TimerExpanded
+                      timer={timer}
+                      presets={presets}
+                      formatTime={formatTime}
+                      progress={timerProgress}
+                      onStart={startTimer}
+                      onPause={pauseTimer}
+                      onResume={resumeTimer}
+                      onStop={stopTimer}
+                      onDismiss={handleDismissAlert}
+                    />
+                  </motion.div>
+                )}
+
+                {activeTab === "media" && (
+                  <motion.div
+                    key="media"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <MediaExpanded
+                      media={media}
+                      onPlayPause={playPause}
+                      onNext={mediaNext}
+                      onPrevious={mediaPrevious}
+                    />
+                  </motion.div>
+                )}
+
+                {activeTab === "notifications" && (
+                  <motion.div
+                    key="notifications"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <div className="flex flex-col gap-1">
+                      <span className="text-white/40 text-[10px] uppercase tracking-wider">
+                        Recent Notifications
+                      </span>
+                      <NotificationsList
+                        notifications={notifications}
+                        hasAccess={hasNotificationAccess}
+                        onDismiss={dismissNotification}
+                      />
+                    </div>
+                  </motion.div>
+                )}
+
+                {activeTab === "settings" && (
+                  <motion.div
+                    key="settings"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    <QuickSettings
+                      volume={volume}
+                      onVolumeChange={setVolume}
+                      onMuteToggle={toggleMute}
+                      brightness={brightness}
+                      onBrightnessChange={setBrightness}
+                      audioDevices={audioDevices}
+                      defaultAudioDevice={defaultAudioDevice}
+                      audioSessions={audioSessions}
+                      onSessionVolumeChange={setSessionVolume}
+                      onSessionMuteToggle={setSessionMute}
+                      autoStartEnabled={autoStartEnabled}
+                      onAutoStartToggle={() => setAutoStartEnabled(!autoStartEnabled)}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Footer with date */}
+            <div className="flex items-center justify-center pt-2 mt-0.5 border-t border-white/5 flex-shrink-0">
+              <span className="text-white/30 text-[9px]">{dateStr}</span>
             </div>
           </motion.div>
         )}
