@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion } from "motion/react";
 import { Pill } from "./components/Pill/Pill";
 
@@ -10,36 +10,93 @@ declare global {
   }
 }
 
+// Tauri invoke helper with error handling
+const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
+  if (!window.__TAURI__) return null;
+  try {
+    return await window.__TAURI__.invoke(cmd, args) as T;
+  } catch (e) {
+    console.error(`Tauri invoke failed (${cmd}):`, e);
+    return null;
+  }
+};
+
 function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const fullscreenCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFullscreenState = useRef(false);
 
+  // Position window on mount and handle display changes
   useEffect(() => {
-    const positionWindow = async () => {
-      if (window.__TAURI__) {
-        try {
-          await window.__TAURI__.invoke("position_window");
-        } catch (e) {
-          console.error("Failed to position window:", e);
-        }
-      }
-    };
+    const positionWindow = () => tauriInvoke("position_window");
     positionWindow();
+
+    // Listen for display/resolution changes
+    const handleResize = () => {
+      positionWindow();
+    };
+
+    // Reposition when window regains focus (handles monitor switches)
+    const handleFocus = () => {
+      positionWindow();
+    };
+
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
-  // Poll for fullscreen (desktop only): pill animates up when something is fullscreen, down when exit
+  // OPTIMIZED: Adaptive polling for fullscreen detection
+  // - Checks less frequently (2.5s) when state is stable
+  // - Uses visibility API to pause when tab/window hidden
   useEffect(() => {
     if (!window.__TAURI__) return;
-    const check = async () => {
-      try {
-        const fullscreen = await window.__TAURI__!.invoke("is_foreground_fullscreen") as boolean;
+
+    const checkFullscreen = async () => {
+      const fullscreen = await tauriInvoke<boolean>("is_foreground_fullscreen");
+      if (fullscreen !== null && fullscreen !== lastFullscreenState.current) {
+        lastFullscreenState.current = fullscreen;
         setIsFullscreen(fullscreen);
-      } catch {
-        // ignore
       }
     };
-    check();
-    const id = setInterval(check, 800);
-    return () => clearInterval(id);
+
+    // Initial check
+    checkFullscreen();
+
+    // Adaptive polling - longer interval since fullscreen changes are infrequent
+    const startPolling = () => {
+      if (fullscreenCheckRef.current) clearInterval(fullscreenCheckRef.current);
+      fullscreenCheckRef.current = setInterval(checkFullscreen, 2500);
+    };
+
+    const stopPolling = () => {
+      if (fullscreenCheckRef.current) {
+        clearInterval(fullscreenCheckRef.current);
+        fullscreenCheckRef.current = null;
+      }
+    };
+
+    // Pause polling when document is hidden (saves CPU when minimized)
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        checkFullscreen(); // Immediate check when becoming visible
+        startPolling();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    startPolling();
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   return (

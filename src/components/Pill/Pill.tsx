@@ -11,6 +11,20 @@ declare global {
   }
 }
 
+// Helper to get current time string
+const getTimeString = () => {
+  const now = new Date();
+  return now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+};
+
+const getDateString = () => {
+  return new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+};
+
+const getSecondsString = () => {
+  return new Date().getSeconds().toString().padStart(2, "0");
+};
+
 export function Pill() {
   const {
     isBooting,
@@ -26,28 +40,32 @@ export function Pill() {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [bootPhase, setBootPhase] = useState<"dot" | "morph" | "complete">("dot");
-  const [time, setTime] = useState(() => {
-    const now = new Date();
-    return now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  });
-  const [dateStr, setDateStr] = useState(() =>
-    new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })
-  );
-  const [seconds, setSeconds] = useState(() =>
-    new Date().toLocaleTimeString(undefined, { second: "2-digit", hour12: false })
-  );
+  const [time, setTime] = useState(getTimeString);
+  const [dateStr, setDateStr] = useState(getDateString);
+  const [seconds, setSeconds] = useState(getSecondsString);
 
-  // Update time and seconds every second
+  // Determine if clock should be active (visible states only)
+  const shouldTickClock = !isBooting && !isIdle;
+
+  // OPTIMIZATION: Only tick clock when pill is visible (hover or expanded)
+  // When idle, clock is paused = zero CPU usage
   useEffect(() => {
+    if (!shouldTickClock) return;
+
+    // Immediately update time when becoming visible
+    setTime(getTimeString());
+    setDateStr(getDateString());
+    setSeconds(getSecondsString());
+
     const tick = () => {
-      const now = new Date();
-      setTime(now.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false }));
-      setDateStr(now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }));
-      setSeconds(now.toLocaleTimeString(undefined, { second: "2-digit", hour12: false }));
+      setTime(getTimeString());
+      setDateStr(getDateString());
+      setSeconds(getSecondsString());
     };
+
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [shouldTickClock]);
 
   // Snappy spring so hover-in and unhover-out feel the same
   const pillSpring = springConfig.snappy;
@@ -269,19 +287,19 @@ export function Pill() {
           >
             {/* Header row */}
             <div className="flex items-center gap-3 mb-4">
-              {/* Icon placeholder */}
-              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500/30 to-purple-500/30 flex items-center justify-center">
-                <div className="w-6 h-6 rounded-full bg-white/20" />
+              {/* Icon */}
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center">
+                <span className="text-white/90 text-sm font-bold">P</span>
               </div>
               
               {/* Title area */}
               <div className="flex flex-col">
                 <span className="text-white/90 text-base font-semibold">PILLAR</span>
-                <span className="text-white/50 text-sm">Dynamic Island</span>
+                <span className="text-white/40 text-xs">v0.1.0</span>
               </div>
             </div>
 
-            {/* Main content */}
+            {/* Main content - Clock display */}
             <div className="flex-1 flex flex-col justify-center gap-1 min-h-[80px]">
               <div className="flex items-baseline gap-2" style={{ fontVariantNumeric: "tabular-nums" }}>
                 <span className="text-3xl font-semibold text-white tracking-tight">{time}</span>
@@ -304,22 +322,10 @@ export function Pill() {
               <span className="text-white/50 text-sm">{dateStr}</span>
             </div>
 
-            {/* Action buttons */}
-            <div className="flex gap-3">
-              <motion.button
-                className="flex-1 py-3 px-4 rounded-2xl bg-white/10 text-white/80 text-sm font-medium hover:bg-white/15 transition-colors"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                Settings
-              </motion.button>
-              <motion.button
-                className="flex-1 py-3 px-4 rounded-2xl bg-white/10 text-white/80 text-sm font-medium hover:bg-white/15 transition-colors"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                About
-              </motion.button>
+            {/* Status indicator - minimal, no dead buttons */}
+            <div className="flex items-center justify-center gap-2 text-white/30 text-xs">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500/60" />
+              <span>Idle</span>
             </div>
           </motion.div>
         )}

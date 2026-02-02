@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 
 export type PillState = "boot" | "idle" | "hover" | "expanded";
 
@@ -15,25 +15,43 @@ interface UsePillStateReturn {
   completeBootAnimation: () => void;
 }
 
+// Timing constants - centralized for easy tuning
+const HOVER_DELAY_MS = 100;  // Delay before hover activates (prevents accidental triggers)
+const EXIT_DELAY_MS = 120;   // Delay before returning to idle
+
 export function usePillState(): UsePillStateReturn {
   const [state, setState] = useState<PillState>("boot");
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Use ref to track state in callbacks without causing re-renders
+  const stateRef = useRef<PillState>(state);
+  stateRef.current = state;
+
+  // Clear all timeouts helper
+  const clearAllTimeouts = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    if (exitTimeoutRef.current) {
+      clearTimeout(exitTimeoutRef.current);
+      exitTimeoutRef.current = null;
+    }
+  }, []);
 
   // Clear timeouts on unmount
   useEffect(() => {
-    return () => {
-      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
-      if (exitTimeoutRef.current) clearTimeout(exitTimeoutRef.current);
-    };
-  }, []);
+    return clearAllTimeouts;
+  }, [clearAllTimeouts]);
 
   const completeBootAnimation = useCallback(() => {
     setState("idle");
   }, []);
 
   const handleMouseEnter = useCallback(() => {
-    if (state === "boot") return;
+    const currentState = stateRef.current;
+    if (currentState === "boot") return;
 
     // Clear any pending exit timeout
     if (exitTimeoutRef.current) {
@@ -41,13 +59,18 @@ export function usePillState(): UsePillStateReturn {
       exitTimeoutRef.current = null;
     }
 
-    // Delay hover activation to prevent accidental triggers (100-150ms)
+    // If already expanded, don't try to hover
+    if (currentState === "expanded") return;
+
+    // Delay hover activation to prevent accidental triggers
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
     hoverTimeoutRef.current = setTimeout(() => {
-      if (state === "idle" || state === "hover") {
+      const s = stateRef.current;
+      if (s === "idle") {
         setState("hover");
       }
-    }, 120);
-  }, [state]);
+    }, HOVER_DELAY_MS);
+  }, []);
 
   const handleMouseLeave = useCallback(() => {
     // Clear pending hover timeout
@@ -56,34 +79,45 @@ export function usePillState(): UsePillStateReturn {
       hoverTimeoutRef.current = null;
     }
 
-    // Short delay before collapse (same feel as hover-in delay)
-    exitTimeoutRef.current = setTimeout(() => {
-      if (state === "hover") {
-        setState("idle");
-      } else if (state === "expanded") {
-        setState("idle");
-      }
-    }, 150);
-  }, [state]);
+    const currentState = stateRef.current;
+    
+    // Collapse on mouse exit (both hover and expanded states)
+    if (currentState === "hover" || currentState === "expanded") {
+      // Longer delay for expanded state to give user time to return
+      const delay = currentState === "expanded" ? EXIT_DELAY_MS * 3 : EXIT_DELAY_MS;
+      
+      exitTimeoutRef.current = setTimeout(() => {
+        const s = stateRef.current;
+        if (s === "hover" || s === "expanded") {
+          setState("idle");
+        }
+      }, delay);
+    }
+  }, []);
 
   const handleClick = useCallback(() => {
-    if (state === "hover") {
+    if (stateRef.current === "hover") {
       setState("expanded");
     }
-  }, [state]);
+  }, []);
 
   const handleClickOutside = useCallback(() => {
-    if (state === "expanded") {
+    if (stateRef.current === "expanded") {
       setState("idle");
     }
-  }, [state]);
+  }, []);
 
-  return {
-    state,
+  // Memoize derived state to prevent unnecessary object allocations
+  const derivedState = useMemo(() => ({
     isBooting: state === "boot",
     isIdle: state === "idle",
     isHovering: state === "hover",
     isExpanded: state === "expanded",
+  }), [state]);
+
+  return {
+    state,
+    ...derivedState,
     handleMouseEnter,
     handleMouseLeave,
     handleClick,
