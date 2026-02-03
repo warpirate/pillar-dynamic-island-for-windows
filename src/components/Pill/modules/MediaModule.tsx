@@ -49,7 +49,7 @@ export function MediaCompact({ media, onPlayPause }: MediaCompactProps) {
       onClick={onPlayPause}
     >
       <MediaIndicator isPlaying={media.isPlaying} />
-      <span className="text-xs text-white/70 truncate max-w-[80px]">
+      <span className="text-[12px] text-white/90 truncate max-w-[80px]">
         {media.title || "Unknown"}
       </span>
     </div>
@@ -93,8 +93,8 @@ export function MediaExpanded({
         <div className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
           <span className="text-2xl opacity-50">🎵</span>
         </div>
-        <span className="text-white/40 text-sm">No media playing</span>
-        <span className="text-white/20 text-xs">
+        <span className="text-white/80 text-[13px]">No media playing</span>
+        <span className="text-white/60 text-[12px]">
           Play something in Spotify, YouTube, etc.
         </span>
       </div>
@@ -114,14 +114,14 @@ export function MediaExpanded({
         
         {/* Track info - single line each, source one line */}
         <div className="flex flex-col min-w-0 flex-1">
-          <span className="text-white font-medium truncate text-sm">
+          <span className="text-white font-medium truncate text-[13px]">
             {media.title || "Unknown Track"}
           </span>
-          <span className="text-white/50 text-xs truncate">
+          <span className="text-white/85 text-[12px] truncate">
             {media.artist || "Unknown Artist"}
           </span>
           {sourceLabel && (
-            <span className="text-white/30 text-[11px] truncate mt-0.5">
+            <span className="text-white/70 text-[12px] truncate mt-0.5">
               via {sourceLabel}
             </span>
           )}
@@ -135,7 +135,7 @@ export function MediaExpanded({
       <div className="flex items-center justify-center gap-3">
         {/* Previous */}
         <motion.button
-          className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white/70"
+          className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
           whileHover={{ scale: 1.1, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
           whileTap={{ scale: 0.9 }}
           onClick={onPrevious}
@@ -165,7 +165,7 @@ export function MediaExpanded({
 
         {/* Next */}
         <motion.button
-          className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white/70"
+          className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
           whileHover={{ scale: 1.1, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
           whileTap={{ scale: 0.9 }}
           onClick={onNext}

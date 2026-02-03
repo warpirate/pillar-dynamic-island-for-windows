@@ -150,3 +150,28 @@ export const bootAnimationDuration = {
   morphToPill: 600,
   total: 900,
 };
+
+// Idle pill slot animations (media, timer, notification badge) — enter/exit when active or turned off
+export const idleSlotAnimations = {
+  left: {
+    initial: { opacity: 0, x: -10 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: -10 },
+  },
+  center: {
+    initial: { opacity: 0, scale: 0.92 },
+    animate: { opacity: 1, scale: 1 },
+    exit: { opacity: 0, scale: 0.92 },
+  },
+  right: {
+    initial: { opacity: 0, x: 10 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: 10 },
+  },
+  transition: {
+    type: "spring" as const,
+    stiffness: 520,
+    damping: 36,
+    duration: 0.15,
+  },
+};

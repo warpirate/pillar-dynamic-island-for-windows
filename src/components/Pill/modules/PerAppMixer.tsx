@@ -52,7 +52,7 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
     <div className="flex items-center gap-1.5 py-0.5">
       {/* App icon placeholder */}
       <div className={`w-5 h-5 rounded ${getAppColor(session.appName)} flex items-center justify-center flex-shrink-0`}>
-        <span className="text-white text-[9px] font-bold uppercase">
+        <span className="text-white text-[10px] font-bold uppercase">
           {session.appName.charAt(0)}
         </span>
       </div>
@@ -63,7 +63,7 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
           {/* Mute button */}
           <motion.button
             className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${
-              session.isMuted ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/50"
+              session.isMuted ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/80"
             }`}
             whileHover={{ scale: 1.1 }}
             whileTap={{ scale: 0.9 }}
@@ -81,14 +81,14 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
           </motion.button>
 
           {/* App name */}
-          <span className={`text-[10px] truncate flex-1 ${
-            session.isActive ? "text-white/70" : "text-white/40"
+          <span className={`text-[12px] truncate flex-1 ${
+            session.isActive ? "text-white/95" : "text-white/75"
           }`}>
             {session.appName}
           </span>
 
           {/* Volume percent */}
-          <span className="text-[9px] text-white/30 w-6 text-right tabular-nums">
+          <span className="text-[11px] text-white/80 w-6 text-right tabular-nums">
             {displayPercent}%
           </span>
         </div>
@@ -135,11 +135,11 @@ interface PerAppMixerProps {
 export function PerAppMixer({ sessions, onVolumeChange, onMuteToggle }: PerAppMixerProps) {
   if (sessions.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-2 text-white/30">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="mb-1 opacity-50">
+      <div className="flex flex-col items-center justify-center py-2 text-white/75">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="mb-1 opacity-80">
           <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
         </svg>
-        <span className="text-[10px]">No apps playing audio</span>
+        <span className="text-[12px]">No apps playing audio</span>
       </div>
     );
   }

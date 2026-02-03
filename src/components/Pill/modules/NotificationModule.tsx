@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import type { SystemNotification } from "../../../hooks/useNotifications";
 import { notificationAnimations } from "../animations";
@@ -59,7 +60,7 @@ export function NotificationIndicator({
 
   return (
     <motion.div 
-      layoutId={layoutId}
+      {...(layoutId != null ? { layoutId } : {})}
       className="flex items-center gap-1"
       initial={notificationAnimations.badge.initial}
       animate={{
@@ -71,13 +72,13 @@ export function NotificationIndicator({
     >
       {/* App icon */}
       <div className={`w-5 h-5 rounded-full ${getAppColorSolid(appName)} flex items-center justify-center`}>
-        <span className="text-white text-[9px] font-bold uppercase">
-          {appName.charAt(0)}
-        </span>
+        <span className="text-white text-[10px] font-bold uppercase">
+            {appName.charAt(0)}
+          </span>
       </div>
       {/* Count badge */}
-      <div className="bg-red-500 rounded-full px-1.5 min-w-[18px] h-[18px] flex items-center justify-center">
-        <span className="text-[10px] text-white font-medium">
+      <div className="bg-red-500 rounded-full px-1.5 min-w-[20px] h-[20px] flex items-center justify-center">
+        <span className="text-[11px] text-white font-medium">
           {count > 9 ? "9+" : count}
         </span>
       </div>
@@ -98,6 +99,21 @@ interface NotificationToastProps {
 export function NotificationToast({ notification, onDismiss, phase = "incoming" }: NotificationToastProps) {
   // Don't show toast if we're past the incoming phase
   const shouldShow = notification && (phase === "incoming" || phase === "absorbing");
+
+  // Safety net: auto-dismiss toast after a short delay so it never gets "stuck"
+  useEffect(() => {
+    if (!notification || !shouldShow) return;
+
+    // Total on-screen time ≈ 2.3s (matches the intended animation sequence)
+    const timeout = setTimeout(() => {
+      onDismiss();
+    }, 2300);
+
+    return () => clearTimeout(timeout);
+    // We intentionally *don't* depend on `phase` here so the timer isn't reset
+    // if some other state change happens while the toast is visible.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notification, shouldShow, onDismiss]);
 
   return (
     <AnimatePresence mode="popLayout">
@@ -125,7 +141,7 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
             <div className="flex items-start gap-3">
               {/* App icon */}
               <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${getAppColorGradient(notification.appName)} flex items-center justify-center flex-shrink-0`}>
-                <span className="text-white text-xs font-bold uppercase">
+                <span className="text-white text-[12px] font-bold uppercase">
                   {notification.appName.charAt(0)}
                 </span>
               </div>
@@ -133,14 +149,14 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
               {/* Content */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-white/60 text-[10px] font-medium">{notification.appName}</span>
-                  <span className="text-white/30 text-[10px]">now</span>
+                  <span className="text-white/85 text-[11px] font-medium">{notification.appName}</span>
+                  <span className="text-white/65 text-[11px]">now</span>
                 </div>
-                <h4 className="text-white text-sm font-medium truncate mt-0.5">
+                <h4 className="text-white text-[13px] font-medium truncate mt-0.5">
                   {notification.title || "Notification"}
                 </h4>
                 {notification.body && (
-                  <p className="text-white/60 text-xs line-clamp-2 mt-1">
+                  <p className="text-white/85 text-[12px] line-clamp-2 mt-1">
                     {notification.body}
                   </p>
                 )}
@@ -185,7 +201,7 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
       <div className="flex items-start gap-2">
         {/* App icon */}
         <div className={`w-6 h-6 rounded-md flex-shrink-0 ${getAppColorSolid(notification.appName)} flex items-center justify-center`}>
-          <span className="text-white text-[9px] font-bold uppercase">
+          <span className="text-white text-[10px] font-bold uppercase">
             {notification.appName.charAt(0)}
           </span>
         </div>
@@ -193,14 +209,14 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-white/40 text-[9px] truncate">{notification.appName}</span>
-            <span className="text-white/30 text-[8px] flex-shrink-0">{formatTime(notification.timestamp)}</span>
+            <span className="text-white/85 text-[11px] truncate">{notification.appName}</span>
+            <span className="text-white/70 text-[10px] flex-shrink-0">{formatTime(notification.timestamp)}</span>
           </div>
-          <h4 className="text-white/80 text-[10px] font-medium truncate mt-0.5">
+          <h4 className="text-white text-[13px] font-medium truncate mt-0.5">
             {notification.title || "Notification"}
           </h4>
           {notification.body && (
-            <p className="text-white/40 text-[9px] line-clamp-2 mt-0.5">
+            <p className="text-white/80 text-[11px] line-clamp-2 mt-0.5">
               {notification.body}
             </p>
           )}
@@ -208,7 +224,7 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
 
         {/* Dismiss button */}
         <motion.button
-          className="w-4 h-4 rounded flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+          className="w-4 h-4 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
           onClick={(e) => {
             e.stopPropagation();
             onDismiss(notification.id);
@@ -238,11 +254,11 @@ export function NotificationsList({ notifications, hasAccess, onDismiss }: Notif
   if (!hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-4 text-center">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="text-white/20 mb-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="text-white/60 mb-1">
           <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 002 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
         </svg>
-        <span className="text-white/40 text-[10px]">Notification access required</span>
-        <span className="text-white/20 text-[9px] mt-0.5">Enable in Windows Settings</span>
+        <span className="text-white text-[13px]">Notification access required</span>
+        <span className="text-white/75 text-[11px] mt-0.5">Enable in Windows Settings</span>
       </div>
     );
   }
@@ -250,11 +266,11 @@ export function NotificationsList({ notifications, hasAccess, onDismiss }: Notif
   if (notifications.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-4 text-center">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="text-white/20 mb-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="text-white/60 mb-1">
           <path d="M12 22c1.1 0 2-.9 2-2h-4a2 2 0 002 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>
         </svg>
-        <span className="text-white/40 text-[10px]">No notifications</span>
-        <span className="text-white/20 text-[9px] mt-0.5">All caught up!</span>
+        <span className="text-white text-[13px]">No notifications</span>
+        <span className="text-white/75 text-[11px] mt-0.5">All caught up!</span>
       </div>
     );
   }

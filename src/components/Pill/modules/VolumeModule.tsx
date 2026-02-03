@@ -43,7 +43,7 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
     <div className="flex items-center gap-2 w-full">
       {/* Mute button */}
       <motion.button
-        className="w-7 h-7 rounded-md bg-white/10 flex items-center justify-center text-white/70 flex-shrink-0"
+        className="w-7 h-7 rounded-md bg-white/10 flex items-center justify-center text-white flex-shrink-0"
         whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
         whileTap={{ scale: 0.95 }}
         onClick={onMuteToggle}
@@ -87,7 +87,7 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
       </div>
 
       {/* Level display */}
-      <span className="text-white/50 text-[10px] w-6 text-right tabular-nums flex-shrink-0">
+      <span className="text-white/90 text-[12px] w-7 text-right tabular-nums flex-shrink-0">
         {displayLevel}%
       </span>
     </div>
@@ -186,7 +186,7 @@ export function BrightnessSlider({ brightness, onBrightnessChange }: BrightnessS
       </div>
 
       {/* Level display */}
-      <span className="text-white/50 text-[10px] w-6 text-right tabular-nums flex-shrink-0">
+      <span className="text-white/90 text-[12px] w-7 text-right tabular-nums flex-shrink-0">
         {displayLevel}%
       </span>
     </div>
@@ -208,9 +208,9 @@ function ToggleSwitch({ enabled, onToggle, label, description }: ToggleSwitchPro
   return (
     <div className="flex items-center justify-between gap-2">
       <div className="flex flex-col min-w-0">
-        <span className="text-white/70 text-[10px]">{label}</span>
+        <span className="text-white/90 text-[12px]">{label}</span>
         {description && (
-          <span className="text-white/30 text-[9px]">{description}</span>
+          <span className="text-white/65 text-[11px]">{description}</span>
         )}
       </div>
       <motion.button
@@ -270,10 +270,10 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
     // Single device - just show it without dropdown
     return (
       <div className="flex items-center gap-1.5 px-1.5 py-1 bg-white/5 rounded-md">
-        <span className="text-white/50 flex-shrink-0">
+        <span className="text-white/80 flex-shrink-0">
           {getDeviceIcon(currentDevice?.name || "")}
         </span>
-        <span className="text-white/60 text-[10px] truncate flex-1 min-w-0">
+        <span className="text-white/90 text-[12px] truncate flex-1 min-w-0">
           {currentDevice?.name || "No audio device"}
         </span>
       </div>
@@ -288,10 +288,10 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
         onClick={() => setIsOpen(!isOpen)}
         whileTap={{ scale: 0.98 }}
       >
-        <span className="text-white/50">
+        <span className="text-white/80">
           {getDeviceIcon(currentDevice?.name || "")}
         </span>
-        <span className="text-white/60 text-[10px] truncate flex-1 text-left min-w-0">
+        <span className="text-white/90 text-[12px] truncate flex-1 text-left min-w-0">
           {currentDevice?.name || "Select device"}
         </span>
         <motion.svg 
@@ -299,7 +299,7 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
           height="12" 
           viewBox="0 0 24 24" 
           fill="currentColor"
-          className="text-white/30"
+          className="text-white/70"
           animate={{ rotate: isOpen ? 180 : 0 }}
         >
           <path d="M7 10l5 5 5-5z"/>
@@ -324,11 +324,11 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
                 }`}
                 onClick={() => setIsOpen(false)}
               >
-                <span className={`flex-shrink-0 ${device.isDefault ? "text-green-400/70" : "text-white/40"}`}>
+                <span className={`flex-shrink-0 ${device.isDefault ? "text-green-400" : "text-white/70"}`}>
                   {getDeviceIcon(device.name)}
                 </span>
-                <span className={`text-[10px] truncate flex-1 text-left min-w-0 ${
-                  device.isDefault ? "text-white/80" : "text-white/50"
+                <span className={`text-[12px] truncate flex-1 text-left min-w-0 ${
+                  device.isDefault ? "text-white" : "text-white/85"
                 }`}>
                   {device.name}
                 </span>
@@ -385,7 +385,7 @@ export function QuickSettings({
     <div className="flex flex-col gap-1.5 py-0">
       {/* Audio output device */}
       <div className="flex flex-col gap-1">
-        <span className="text-white/60 text-[10px]">Output</span>
+        <span className="text-white/90 text-[12px]">Output</span>
         <DeviceSelector 
           devices={audioDevices}
           currentDevice={defaultAudioDevice}
@@ -395,10 +395,10 @@ export function QuickSettings({
       {/* Volume control */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <span className="text-white/60 text-[10px]">Volume</span>
+          <span className="text-white/90 text-[12px]">Volume</span>
           <motion.button
-            className={`text-[9px] px-1 py-0.5 rounded ${
-              showMixer ? "bg-white/15 text-white/70" : "text-white/40 hover:text-white/60"
+            className={`text-[11px] px-1 py-0.5 rounded ${
+              showMixer ? "bg-white/15 text-white/90" : "text-white/75 hover:text-white"
             }`}
             onClick={() => setShowMixer(!showMixer)}
             whileTap={{ scale: 0.95 }}
@@ -424,7 +424,7 @@ export function QuickSettings({
             className="overflow-hidden"
           >
             <div className="bg-white/5 rounded-lg p-1.5 mt-0.5">
-              <span className="text-white/40 text-[9px] uppercase tracking-wider mb-0.5 block">
+              <span className="text-white/85 text-[11px] uppercase tracking-wider mb-0.5 block">
                 App Volumes
               </span>
               <PerAppMixer
@@ -440,9 +440,9 @@ export function QuickSettings({
       {/* Brightness control */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
-          <span className="text-white/60 text-[10px]">Brightness</span>
+          <span className="text-white/90 text-[12px]">Brightness</span>
           {!brightness.isSupported && (
-            <span className="text-white/30 text-[9px]">DDC/CI N/A</span>
+            <span className="text-white/65 text-[11px]">DDC/CI N/A</span>
           )}
         </div>
         <BrightnessSlider

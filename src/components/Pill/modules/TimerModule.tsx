@@ -85,7 +85,7 @@ export function TimerCompact({ timer, formatTime, progress }: TimerCompactProps)
         isAlert={timer.isComplete}
       />
       <span 
-        className="text-sm font-medium tabular-nums"
+        className="text-[13px] font-medium tabular-nums"
         style={{ 
           color: timer.isComplete ? "#ef4444" : "#ffffff",
           textShadow: timer.isComplete ? "0 0 8px rgba(239, 68, 68, 0.5)" : undefined,
@@ -132,11 +132,11 @@ export function TimerAlert({ label, onDismiss }: TimerAlertProps) {
         <span className="text-base">⏰</span>
       </motion.div>
       
-      <span className="text-white font-semibold text-sm">{label}</span>
-      <span className="text-white/60 text-xs">Time's up!</span>
+      <span className="text-white font-semibold text-[13px]">{label}</span>
+      <span className="text-white/90 text-[12px]">Time's up!</span>
       
       <motion.button
-        className="mt-1 px-3 py-1.5 rounded-lg bg-red-500/20 text-red-400 text-xs font-medium"
+        className="mt-1 px-3 py-1.5 rounded-lg bg-red-500/20 text-red-400 text-[12px] font-medium"
         whileHover={{ scale: 1.05, backgroundColor: "rgba(239, 68, 68, 0.3)" }}
         whileTap={{ scale: 0.95 }}
         onClick={onDismiss}
@@ -219,7 +219,7 @@ export function TimerExpanded({
             <span className="text-lg font-bold text-white tabular-nums">
               {formatTime(timer.remainingSeconds)}
             </span>
-            <span className="text-[10px] text-white/50">{timer.label}</span>
+            <span className="text-[12px] text-white/85">{timer.label}</span>
           </div>
         </div>
 
@@ -227,7 +227,7 @@ export function TimerExpanded({
         <div className="flex gap-2">
           {timer.isPaused ? (
             <motion.button
-              className="px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-xs font-medium"
+              className="px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-[12px] font-medium"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={onResume}
@@ -236,7 +236,7 @@ export function TimerExpanded({
             </motion.button>
           ) : (
             <motion.button
-              className="px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 text-xs font-medium"
+              className="px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 text-[12px] font-medium"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={onPause}
@@ -245,7 +245,7 @@ export function TimerExpanded({
             </motion.button>
           )}
           <motion.button
-            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/70 text-xs font-medium"
+            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-[12px] font-medium"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={onStop}
@@ -260,20 +260,20 @@ export function TimerExpanded({
   // No timer - show presets
   return (
     <div className="flex flex-col gap-2 py-1">
-      <span className="text-white/60 text-[10px] text-center uppercase tracking-wider">
+      <span className="text-white/90 text-[12px] text-center uppercase tracking-wider">
         Start Timer
       </span>
       <div className="flex flex-wrap gap-1.5 justify-center">
         {presets.map(preset => (
           <motion.button
             key={preset.id}
-            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/80 text-xs font-medium"
+            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-[12px] font-medium"
             whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
             whileTap={{ scale: 0.95 }}
             onClick={() => onStart(preset)}
           >
             {preset.label}
-            <span className="ml-0.5 text-white/40">{preset.workMinutes}m</span>
+            <span className="ml-0.5 text-white/75">{preset.workMinutes}m</span>
           </motion.button>
         ))}
       </div>

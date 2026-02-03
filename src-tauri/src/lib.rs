@@ -35,6 +35,7 @@ use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY}
 use windows::core::{HSTRING, Interface};
 use windows::UI::Notifications::Management::{UserNotificationListener, UserNotificationListenerAccessStatus};
 use windows::UI::Notifications::UserNotification;
+use brightness::blocking::Brightness;
 
 
 // =============================================================================
@@ -901,14 +902,28 @@ fn get_primary_physical_monitor() -> Result<PHYSICAL_MONITOR, String> {
     }
 }
 
-/// Get system brightness (using DDC/CI for physical monitors)
+/// Get system brightness: try WMI (laptops) first via brightness crate, then DDC/CI (external monitors)
 #[tauri::command]
 fn get_system_brightness() -> Result<BrightnessInfo, String> {
+    // 1. Try brightness crate first (WMI - works on laptop internal panels)
+    for device_result in brightness::blocking::brightness_devices() {
+        if let Ok(device) = device_result {
+            if let Ok(level) = device.get() {
+                return Ok(BrightnessInfo {
+                    level: level.min(100),
+                    min: 0,
+                    max: 100,
+                    is_supported: true,
+                });
+            }
+        }
+    }
+
+    // 2. Fallback: DDC/CI for external monitors
     unsafe {
         let monitor = match get_primary_physical_monitor() {
             Ok(m) => m,
             Err(_) => {
-                // DDC/CI not supported, return default
                 return Ok(BrightnessInfo {
                     level: 100,
                     min: 0,
@@ -917,31 +932,28 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
                 });
             }
         };
-        
+
         let mut min_brightness: u32 = 0;
         let mut current_brightness: u32 = 0;
         let mut max_brightness: u32 = 0;
-        
+
         let result = GetMonitorBrightness(
             monitor.hPhysicalMonitor,
             &mut min_brightness,
             &mut current_brightness,
             &mut max_brightness,
         );
-        
-        // Clean up monitor handle
+
         let _ = DestroyPhysicalMonitor(monitor.hPhysicalMonitor);
-        
-        // GetMonitorBrightness returns i32 (TRUE=1 = success)
+
         if result != 0 {
-            // Normalize to 0-100 scale
             let range = max_brightness - min_brightness;
             let normalized = if range > 0 {
                 ((current_brightness - min_brightness) * 100) / range
             } else {
                 100
             };
-            
+
             Ok(BrightnessInfo {
                 level: normalized,
                 min: min_brightness,
@@ -949,7 +961,6 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
                 is_supported: true,
             })
         } else {
-            // DDC/CI not supported on this monitor (common for laptops)
             Ok(BrightnessInfo {
                 level: 100,
                 min: 0,
@@ -960,38 +971,42 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
     }
 }
 
-/// Set system brightness (0-100)
+/// Set system brightness (0-100): try WMI (laptops) first, then DDC/CI (external monitors)
 #[tauri::command]
 fn set_system_brightness(level: u32) -> Result<(), String> {
-    if level > 100 {
-        return Err("Brightness level must be 0-100".to_string());
+    let level = level.min(100);
+
+    // 1. Try brightness crate first (WMI - works on laptop internal panels)
+    for device_result in brightness::blocking::brightness_devices() {
+        if let Ok(device) = device_result {
+            if device.set(level).is_ok() {
+                return Ok(());
+            }
+        }
     }
-    
+
+    // 2. Fallback: DDC/CI for external monitors
     unsafe {
         let monitor = get_primary_physical_monitor()?;
-        
-        // First get the min/max range
+
         let mut min_brightness: u32 = 0;
         let mut current_brightness: u32 = 0;
         let mut max_brightness: u32 = 0;
-        
+
         let _ = GetMonitorBrightness(
             monitor.hPhysicalMonitor,
             &mut min_brightness,
             &mut current_brightness,
             &mut max_brightness,
         );
-        
-        // Convert from 0-100 to actual range
+
         let range = max_brightness - min_brightness;
         let actual_level = min_brightness + (level * range) / 100;
-        
+
         let result = SetMonitorBrightness(monitor.hPhysicalMonitor, actual_level);
-        
-        // Clean up
+
         let _ = DestroyPhysicalMonitor(monitor.hPhysicalMonitor);
-        
-        // SetMonitorBrightness returns i32 (TRUE=1 = success)
+
         if result != 0 {
             Ok(())
         } else {

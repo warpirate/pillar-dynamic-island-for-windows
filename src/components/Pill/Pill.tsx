@@ -10,7 +10,7 @@ import { useAudioDevices } from "../../hooks/useAudioDevices";
 import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
-import { springConfig, pillDimensions, bootAnimationDuration } from "./animations";
+import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations } from "./animations";
 import { TimerExpanded } from "./modules/TimerModule";
 import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
@@ -104,7 +104,7 @@ export function Pill() {
     playPause,
     next: mediaNext,
     previous: mediaPrevious,
-  } = useMediaSession(3000); // Poll every 3 seconds
+  } = useMediaSession(600); // Poll every 600ms for snappy media detection
 
   // Volume hook
   const {
@@ -421,72 +421,109 @@ export function Pill() {
           className="absolute inset-0 flex items-center pointer-events-none select-none px-4"
           style={{
             fontVariantNumeric: "tabular-nums",
-            fontSize: "17px",
+            fontSize: "18px",
             fontWeight: 600,
             letterSpacing: "0.02em",
           }}
         >
-          {/* Left side: Media indicator or spacer */}
-          <div className="flex items-center flex-shrink-0">
-            {showMediaInIdle && (
-              <MediaIndicator isPlaying={true} />
-            )}
-          </div>
+          {/* Left side: Media indicator — animate width so center slides left when media stops */}
+          <motion.div
+            className="flex items-center flex-shrink-0 min-w-0 overflow-hidden"
+            animate={{ width: showMediaInIdle ? 32 : 0 }}
+            transition={idleSlotAnimations.transition}
+          >
+            <AnimatePresence mode="wait">
+              {showMediaInIdle && (
+                <motion.div
+                  key="media"
+                  className="flex items-center flex-shrink-0"
+                  initial={idleSlotAnimations.left.initial}
+                  animate={idleSlotAnimations.left.animate}
+                  exit={idleSlotAnimations.left.exit}
+                  transition={idleSlotAnimations.transition}
+                >
+                  <MediaIndicator isPlaying={true} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
 
-          {/* Center: Time and timer - flex-1 + justify-center so time stays centered when no left/right content */}
-          <div className="flex items-center justify-center gap-2 flex-1 min-w-0">
-            {/* Timer display when active */}
-            {hasTimerActive && !hasTimerAlert && (
-              <span 
-                className="text-green-400"
-                style={{ textShadow: "0 0 8px rgba(34, 197, 94, 0.4)" }}
-              >
-                {formatTime(timer.remainingSeconds)}
-              </span>
-            )}
-            
-            {/* Timer alert pulsing indicator */}
-            {hasTimerAlert && (
-              <motion.span 
-                className="text-red-400"
-                animate={{ opacity: [1, 0.5, 1] }}
-                transition={{ duration: 1, repeat: Infinity }}
-                style={{ textShadow: "0 0 8px rgba(239, 68, 68, 0.5)" }}
-              >
-                Done!
-              </motion.span>
-            )}
-            
-            {/* Time display - single block so no gap between first digit and rest */}
-            {!hasTimerAlert && (
-              <span
-                className="inline-flex items-baseline"
-                style={{ fontVariantNumeric: "tabular-nums" }}
-              >
-                {time.length > 0 ? (
-                  <>
-                    <span style={{ color: "#EB0028", textShadow: "0 0 10px rgba(235, 0, 40, 0.5)" }}>
-                      {time[0]}
-                    </span>
-                    <span style={{ color: "#ffffff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>
-                      {time.slice(1)}
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ color: "#ffffff" }}>{time}</span>
-                )}
-              </span>
-            )}
-          </div>
+          {/* Center: Time and timer — layout so position animates when left/right slots appear or disappear */}
+          <motion.div
+            layout
+            className="flex items-center justify-center gap-2 flex-1 min-w-0 overflow-hidden"
+            transition={idleSlotAnimations.transition}
+          >
+            <AnimatePresence mode="wait">
+              {hasTimerActive && !hasTimerAlert && (
+                <motion.span
+                  key="timer"
+                  className="text-green-400"
+                  style={{ textShadow: "0 0 8px rgba(34, 197, 94, 0.4)" }}
+                  initial={idleSlotAnimations.center.initial}
+                  animate={idleSlotAnimations.center.animate}
+                  exit={idleSlotAnimations.center.exit}
+                  transition={idleSlotAnimations.transition}
+                >
+                  {formatTime(timer.remainingSeconds)}
+                </motion.span>
+              )}
+              {hasTimerAlert && (
+                <motion.span
+                  key="alert"
+                  className="text-red-400"
+                  style={{ textShadow: "0 0 8px rgba(239, 68, 68, 0.5)" }}
+                  initial={idleSlotAnimations.center.initial}
+                  animate={{
+                    ...idleSlotAnimations.center.animate,
+                    opacity: [1, 0.5, 1],
+                  }}
+                  exit={idleSlotAnimations.center.exit}
+                  transition={{
+                    ...idleSlotAnimations.transition,
+                    opacity: { duration: 1, repeat: Infinity },
+                  }}
+                >
+                  Done!
+                </motion.span>
+              )}
+              {!hasTimerActive && !hasTimerAlert && (
+                <motion.span
+                  key="time"
+                  className="inline-flex items-baseline"
+                  style={{ fontVariantNumeric: "tabular-nums" }}
+                  initial={idleSlotAnimations.center.initial}
+                  animate={idleSlotAnimations.center.animate}
+                  exit={idleSlotAnimations.center.exit}
+                  transition={idleSlotAnimations.transition}
+                >
+                  {time.length > 0 ? (
+                    <>
+                      <span style={{ color: "#EB0028", textShadow: "0 0 10px rgba(235, 0, 40, 0.5)" }}>
+                        {time[0]}
+                      </span>
+                      <span style={{ color: "#ffffff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>
+                        {time.slice(1)}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ color: "#ffffff" }}>{time}</span>
+                  )}
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.div>
 
-          {/* Right side: Notification badge - flex-shrink-0 so center keeps remaining space */}
-          <div className="flex items-center justify-end flex-shrink-0">
-            <AnimatePresence mode="popLayout">
+          {/* Right side: Notification badge — direct AnimatePresence child, no layoutId, overflow-visible so exit is visible */}
+          <div className="flex items-center justify-end flex-shrink-0 min-w-0 overflow-visible">
+            <AnimatePresence mode="wait">
               {hasNotificationBadge && notifications.length > 0 && (
                 <NotificationIndicator
+                  key="notification-badge"
                   count={notifications.length}
                   appName={notifications[0]?.appName || "App"}
                   isNew={isNewNotification}
+                  layoutId={undefined}
                 />
               )}
             </AnimatePresence>
@@ -508,13 +545,13 @@ export function Pill() {
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
                 <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center flex-shrink-0">
-                  <span className="text-white/90 text-[9px] font-bold">P</span>
+                  <span className="text-white text-[10px] font-bold">P</span>
                 </div>
-                <span className="text-white/70 text-[11px] font-medium">PILLAR</span>
+                <span className="text-white text-[13px] font-semibold tracking-wide">PILLAR</span>
               </div>
 
               <span
-                className="text-xs font-medium text-white/70 tabular-nums"
+                className="text-[13px] font-medium text-white tabular-nums"
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 {time}:{seconds}
@@ -531,10 +568,10 @@ export function Pill() {
               ].map(tab => (
                 <motion.button
                   key={tab.id}
-                  className={`relative flex-1 py-1 px-0.5 rounded-md text-[10px] font-medium transition-colors ${
+                  className={`relative flex-1 py-1 px-0.5 rounded-md text-[12px] font-medium transition-colors ${
                     activeTab === tab.id 
                       ? "bg-white/15 text-white" 
-                      : "text-white/40 hover:text-white/60"
+                      : "text-white/80 hover:text-white"
                   }`}
                   onClick={() => setActiveTab(tab.id)}
                   whileTap={{ scale: 0.95 }}
@@ -542,7 +579,7 @@ export function Pill() {
                   <span className="mr-0.5">{tab.icon}</span>
                   {tab.label}
                   {'badge' in tab && tab.badge && (
-                    <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 rounded-full text-[8px] text-white flex items-center justify-center">
+                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full text-[10px] text-white font-medium flex items-center justify-center">
                       {tab.badge > 9 ? "9+" : tab.badge}
                     </span>
                   )}
@@ -601,7 +638,7 @@ export function Pill() {
                     transition={{ duration: 0.15 }}
                   >
                     <div className="flex flex-col gap-1">
-                      <span className="text-white/40 text-[10px] uppercase tracking-wider">
+                      <span className="text-white/90 text-[13px] font-medium uppercase tracking-wider">
                         Recent Notifications
                       </span>
                       <NotificationsList
@@ -642,7 +679,7 @@ export function Pill() {
 
             {/* Footer with date */}
             <div className="flex items-center justify-center pt-2 mt-0.5 border-t border-white/5 flex-shrink-0">
-              <span className="text-white/30 text-[9px]">{dateStr}</span>
+              <span className="text-white/85 text-[12px]">{dateStr}</span>
             </div>
           </motion.div>
         )}

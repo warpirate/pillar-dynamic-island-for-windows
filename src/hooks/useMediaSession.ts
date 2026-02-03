@@ -49,7 +49,7 @@ const tauriInvoke = async <T,>(cmd: string): Promise<T | null> => {
 // =============================================================================
 
 export function useMediaSession(
-  pollInterval = 3000,
+  pollInterval = 600,
   onMediaChange?: (media: MediaInfo | null) => void
 ): UseMediaSessionReturn {
   const [media, setMedia] = useState<MediaInfo | null>(null);
@@ -136,6 +136,15 @@ export function useMediaSession(
       }
     };
   }, [fetchMedia, pollInterval]);
+
+  // Refetch immediately when window becomes visible (e.g. user switched back from another app)
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (!document.hidden) fetchMedia();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, [fetchMedia]);
 
   return {
     media,
