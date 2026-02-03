@@ -44,11 +44,16 @@ export function useAutoStart(): UseAutoStartReturn {
     await checkStatus();
   }, [checkStatus]);
 
-  // Enable or disable autostart
+  // Enable or disable autostart — after calling backend, re-check so UI reflects actual state
   const setEnabled = useCallback(async (enabled: boolean) => {
     setIsLoading(true);
     await tauriInvoke("set_autostart_enabled", { enabled });
-    setIsEnabled(enabled);
+    const actual = await tauriInvoke<boolean>("check_autostart_enabled");
+    if (actual !== null) {
+      setIsEnabled(actual);
+    } else {
+      setIsEnabled(enabled);
+    }
     setIsLoading(false);
   }, []);
 

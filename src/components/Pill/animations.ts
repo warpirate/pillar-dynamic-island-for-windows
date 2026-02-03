@@ -151,6 +151,26 @@ export const bootAnimationDuration = {
   total: 900,
 };
 
+// Single source of truth: target dimensions + blur/shadow for current interaction state.
+// Use this in one place so hover/expanded/unhover logic stays simple and animations stay smooth.
+export type PillVisualState = "idle" | "hover" | "expanded";
+
+export function getPillTargetStyle(
+  state: PillVisualState,
+  hasNotificationBadge: boolean
+): { width: number; height: number; borderRadius: number; blur: number; shadow: number } {
+  if (state === "expanded") {
+    const d = pillDimensions.expanded;
+    return { ...d, blur: 16, shadow: 0.35 };
+  }
+  if (state === "hover") {
+    const d = hasNotificationBadge ? pillDimensions.hoverWithNotifications : pillDimensions.hover;
+    return { ...d, blur: 12, shadow: 0.25 };
+  }
+  const d = hasNotificationBadge ? pillDimensions.idleWithNotifications : pillDimensions.idle;
+  return { ...d, blur: 8, shadow: 0.2 };
+}
+
 // Idle pill slot animations (media, timer, notification badge) — enter/exit when active or turned off
 export const idleSlotAnimations = {
   left: {

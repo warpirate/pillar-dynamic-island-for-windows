@@ -69,11 +69,13 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
     setIsLoading(false);
   }, [fetchBrightness]);
 
-  // Set brightness level
+  // Set brightness level — only update state if backend succeeds
   const setBrightness = useCallback(async (level: number) => {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
-    await tauriInvoke("set_system_brightness", { level: clampedLevel });
-    setBrightnessState(prev => ({ ...prev, level: clampedLevel }));
+    const ok = await tauriInvoke("set_system_brightness", { level: clampedLevel });
+    if (ok !== null) {
+      setBrightnessState(prev => ({ ...prev, level: clampedLevel }));
+    }
   }, []);
 
   // Start polling when mounted

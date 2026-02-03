@@ -33,8 +33,9 @@ use windows::Win32::Devices::Display::{
 };
 use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY};
 use windows::core::{HSTRING, Interface};
+use windows::Foundation::TypedEventHandler;
 use windows::UI::Notifications::Management::{UserNotificationListener, UserNotificationListenerAccessStatus};
-use windows::UI::Notifications::UserNotification;
+use windows::UI::Notifications::{UserNotification, UserNotificationChangedEventArgs};
 use brightness::blocking::Brightness;
 
 
@@ -971,10 +972,16 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
     }
 }
 
+/// Payload for set_system_brightness (frontend sends { level: 0..100 })
+#[derive(Deserialize)]
+struct SetBrightnessPayload {
+    level: u32,
+}
+
 /// Set system brightness (0-100): try WMI (laptops) first, then DDC/CI (external monitors)
 #[tauri::command]
-fn set_system_brightness(level: u32) -> Result<(), String> {
-    let level = level.min(100);
+fn set_system_brightness(payload: SetBrightnessPayload) -> Result<(), String> {
+    let level = payload.level.min(100);
 
     // 1. Try brightness crate first (WMI - works on laptop internal panels)
     for device_result in brightness::blocking::brightness_devices() {
@@ -1236,8 +1243,17 @@ fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
+    let mut builder = tauri::Builder::default().plugin(tauri_plugin_shell::init());
+
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ));
+    }
+
+    builder
         .invoke_handler(tauri::generate_handler![
             set_click_through,
             resize_window,
@@ -1273,17 +1289,6 @@ pub fn run() {
             set_autostart_enabled
         ])
         .setup(|app| {
-            #[cfg(target_os = "windows")]
-            {
-                // Autostart on Windows via Registry (LaunchAgent param is macOS-only and ignored here)
-                let _ = app.handle().plugin(
-                    tauri_plugin_autostart::init(
-                        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                        None,
-                    ),
-                );
-            }
-
             // System tray with Quit so the app can be closed (window has no title bar / taskbar)
             let quit_i = MenuItem::with_id(app, "quit", "Quit PILLAR", true, None::<&str>)
                 .map_err(|e| e.to_string())?;
@@ -1310,6 +1315,26 @@ pub fn run() {
                     x,
                     y: 0.0,
                 }));
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::Emitter;
+                if let Ok(listener) = UserNotificationListener::Current() {
+                    if poll_notification_access().ok() == Some(UserNotificationListenerAccessStatus::Allowed) {
+                        let app_handle = app.handle().clone();
+                        let handler = TypedEventHandler::new(
+                            move |_listener: &Option<UserNotificationListener>,
+                                  _args: &Option<UserNotificationChangedEventArgs>| {
+                                let _ = app_handle.emit("notification-changed", ());
+                                Ok(())
+                            },
+                        );
+                        if listener.NotificationChanged(&handler).is_err() {
+                            eprintln!("[PILLAR] Failed to subscribe to NotificationChanged");
+                        }
+                    }
+                }
             }
 
             Ok(())

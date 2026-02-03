@@ -392,7 +392,21 @@ export function QuickSettings({
         />
       </div>
 
-      {/* Volume control */}
+      {/* Brightness control (top) */}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <span className="text-white/90 text-[12px]">Brightness</span>
+          {!brightness.isSupported && (
+            <span className="text-white/65 text-[11px]">DDC/CI N/A</span>
+          )}
+        </div>
+        <BrightnessSlider
+          brightness={brightness}
+          onBrightnessChange={onBrightnessChange}
+        />
+      </div>
+
+      {/* Volume control (bottom) */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <span className="text-white/90 text-[12px]">Volume</span>
@@ -436,20 +450,6 @@ export function QuickSettings({
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Brightness control */}
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <span className="text-white/90 text-[12px]">Brightness</span>
-          {!brightness.isSupported && (
-            <span className="text-white/65 text-[11px]">DDC/CI N/A</span>
-          )}
-        </div>
-        <BrightnessSlider
-          brightness={brightness}
-          onBrightnessChange={onBrightnessChange}
-        />
-      </div>
 
       {/* Divider */}
       <div className="h-px bg-white/5 my-0.5" />

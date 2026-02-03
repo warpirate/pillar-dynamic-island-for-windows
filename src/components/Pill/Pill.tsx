@@ -10,7 +10,7 @@ import { useAudioDevices } from "../../hooks/useAudioDevices";
 import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
-import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations } from "./animations";
+import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState } from "./animations";
 import { TimerExpanded } from "./modules/TimerModule";
 import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
@@ -46,7 +46,6 @@ const getSecondsString = () => {
 export function Pill() {
   const {
     isBooting,
-    isIdle,
     isHovering,
     isExpanded,
     handleMouseEnter,
@@ -147,7 +146,7 @@ export function Pill() {
     isNewNotification,
     dismissNotification,
     clearLatest: clearLatestNotification,
-  } = useNotifications(5000); // Poll every 5 seconds
+  } = useNotifications(); // Real-time via Windows NotificationChanged event; fallback poll every 30s
   
   // Whether to show notification badge in the pill
   const hasNotificationBadge = notifications.length > 0 && 
@@ -250,38 +249,19 @@ export function Pill() {
     sequence();
   }, [isBooting, width, height, borderRadius, blurAmount, shadowOpacity, completeBootAnimation]);
 
-  // Update dimensions based on state (including notification badge)
+  // Single place for hover/expanded/unhover: one visual state → one target style
+  const visualState: PillVisualState = isExpanded ? "expanded" : isHovering ? "hover" : "idle";
+
+  // Update dimensions from current visual state (keeps animations smooth, logic simple)
   useEffect(() => {
     if (isBooting) return;
-
-    if (isIdle) {
-      // Use wider dimensions when notifications are present
-      const dims = hasNotificationBadge 
-        ? pillDimensions.idleWithNotifications 
-        : pillDimensions.idle;
-      width.set(dims.width);
-      height.set(dims.height);
-      borderRadius.set(dims.borderRadius);
-      blurAmount.set(8);
-      shadowOpacity.set(0.2);
-    } else if (isHovering) {
-      // Use wider dimensions when notifications are present
-      const dims = hasNotificationBadge 
-        ? pillDimensions.hoverWithNotifications 
-        : pillDimensions.hover;
-      width.set(dims.width);
-      height.set(dims.height);
-      borderRadius.set(dims.borderRadius);
-      blurAmount.set(12);
-      shadowOpacity.set(0.25);
-    } else if (isExpanded) {
-      width.set(pillDimensions.expanded.width);
-      height.set(pillDimensions.expanded.height);
-      borderRadius.set(pillDimensions.expanded.borderRadius);
-      blurAmount.set(16);
-      shadowOpacity.set(0.35);
-    }
-  }, [isBooting, isIdle, isHovering, isExpanded, hasNotificationBadge, width, height, borderRadius, blurAmount, shadowOpacity]);
+    const target = getPillTargetStyle(visualState, hasNotificationBadge);
+    width.set(target.width);
+    height.set(target.height);
+    borderRadius.set(target.borderRadius);
+    blurAmount.set(target.blur);
+    shadowOpacity.set(target.shadow);
+  }, [isBooting, visualState, hasNotificationBadge, width, height, borderRadius, blurAmount, shadowOpacity]);
 
   // Keep window always receiving clicks so the pill is clickable.
   // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
@@ -298,14 +278,17 @@ export function Pill() {
     setClickThrough(false);
   }, []);
 
-  // Resize and re-center window when expanded (desktop: keeps pill visible and top-centered)
+  // Resize and re-center window when expanded or when notification toast is showing (so toast isn't clipped)
+  const showNotificationToast = !isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && !!latestNotification;
   useEffect(() => {
     const resizeAndCenter = async () => {
       if (window.__TAURI__) {
         try {
           const dims = isExpanded ? pillDimensions.expanded : pillDimensions.idle;
           const w = dims.width + 60;
-          const h = dims.height + 100;
+          // When toast is visible, add enough height for pill + gap + toast (~100px for toast)
+          const extraHeight = showNotificationToast ? 120 : 100;
+          const h = dims.height + extraHeight;
           await window.__TAURI__.core.invoke("resize_and_center", { width: w, height: h });
         } catch (e) {
           console.error("Failed to resize/position window:", e);
@@ -314,7 +297,7 @@ export function Pill() {
     };
 
     resizeAndCenter();
-  }, [isExpanded]);
+  }, [isExpanded, showNotificationToast]);
 
   // Handle click outside
   useEffect(() => {

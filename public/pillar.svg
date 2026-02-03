@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PILLAR mark: monolithic cooling-tower + island capsule (vector, icon-safe) -->
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Slight soft highlight; still reads in 1-color when flattened -->
+    <linearGradient id="g" x1="144" y1="64" x2="368" y2="448" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="0.35" stop-color="#FFFFFF" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.35"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0.22 0" result="shadow"/>
+      <feOffset in="shadow" dy="10" result="offsetShadow"/>
+      <feComposite in="offsetShadow" in2="SourceAlpha" operator="out" result="shadowOut"/>
+      <feMerge>
+        <feMergeNode in="shadowOut"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="512" height="512" rx="128" fill="#0B0D12"/>
+
+  <!-- Dynamic island capsule -->
+  <rect x="140" y="90" width="232" height="72" rx="36" fill="#111524"/>
+  <rect x="148" y="98" width="216" height="56" rx="28" fill="url(#g)" opacity="0.10"/>
+
+  <!-- Pillar silhouette -->
+  <g filter="url(#soft)">
+    <!-- Outer tower -->
+    <path
+      d="M196 104
+         C196 92 205 82 218 80
+         C229 78 241 78 256 78
+         C271 78 283 78 294 80
+         C307 82 316 92 316 104
+         C316 141 307 171 297 199
+         C286 230 276 257 276 292
+         C276 330 289 360 302 388
+         C314 414 326 438 326 464
+         C326 476 317 486 304 488
+         C289 490 274 490 256 490
+         C238 490 223 490 208 488
+         C195 486 186 476 186 464
+         C186 438 198 414 210 388
+         C223 360 236 330 236 292
+         C236 257 226 230 215 199
+         C205 171 196 141 196 104Z"
+      fill="#F2F4FF"
+      opacity="0.92"
+    />
+
+    <!-- Inner cut / waist accent -->
+    <path
+      d="M224 156
+         C224 144 233 134 246 132
+         C249 132 252 132 256 132
+         C260 132 263 132 266 132
+         C279 134 288 144 288 156
+         C288 190 281 214 273 235
+         C265 256 260 273 260 292
+         C260 314 268 335 277 356
+         C285 376 294 396 294 420
+         C294 432 285 442 272 444
+         C267 444 262 444 256 444
+         C250 444 245 444 240 444
+         C227 442 218 432 218 420
+         C218 396 227 376 235 356
+         C244 335 252 314 252 292
+         C252 273 247 256 239 235
+         C231 214 224 190 224 156Z"
+      fill="#0B0D12"
+      opacity="0.16"
+    />
+  </g>
+</svg>
+

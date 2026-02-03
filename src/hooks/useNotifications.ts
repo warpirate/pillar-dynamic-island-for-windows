@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 // =============================================================================
 // Types
@@ -42,7 +43,10 @@ const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Pro
 // Hook
 // =============================================================================
 
-export function useNotifications(pollInterval = 5000): UseNotificationsReturn {
+/** Fallback poll interval (ms) when not using real-time events; only used if backend doesn't emit notification-changed. */
+const FALLBACK_POLL_MS = 30_000;
+
+export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificationsReturn {
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [hasAccess, setHasAccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,6 +59,8 @@ export function useNotifications(pollInterval = 5000): UseNotificationsReturn {
   const latestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const newNotificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationPhaseRef = useRef<NotificationPhase>(notificationPhase);
+  notificationPhaseRef.current = notificationPhase;
 
   // Check notification access
   const checkAccess = useCallback(async () => {
@@ -96,7 +102,8 @@ export function useNotifications(pollInterval = 5000): UseNotificationsReturn {
       // Check for new notifications
       if (mapped.length > 0) {
         const newest = mapped[0];
-        if (newest.id !== lastSeenIdRef.current && lastSeenIdRef.current !== 0) {
+        // Show toast for any new notification (including the first one)
+        if (newest.id !== lastSeenIdRef.current) {
           // New notification arrived - start animation sequence
           setLatestNotification(newest);
           setIsNewNotification(true);
@@ -128,15 +135,15 @@ export function useNotifications(pollInterval = 5000): UseNotificationsReturn {
         lastSeenIdRef.current = newest.id;
       }
       
-      // Update phase based on notification count
-      if (mapped.length === 0 && notificationPhase === "showing") {
+      // Update phase based on notification count (use ref so we don't need notificationPhase in deps — that would recreate this callback when phase changes and kill the phase timeouts)
+      if (mapped.length === 0 && notificationPhaseRef.current === "showing") {
         setNotificationPhase("idle");
       }
       
       setNotifications(mapped);
     }
     setIsLoading(false);
-  }, [hasAccess, checkAccess, notificationPhase]);
+  }, [hasAccess, checkAccess]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -176,19 +183,32 @@ export function useNotifications(pollInterval = 5000): UseNotificationsReturn {
     checkAccess();
   }, [checkAccess]);
 
-  // Start polling when mounted
-  useEffect(() => {
-    // Initial fetch
-    fetchNotifications();
+  const unlistenRef = useRef<(() => void) | null>(null);
 
-    // Poll for new notifications
+  // Real-time: listen for Windows notification-changed event from backend; fallback poll as backup
+  useEffect(() => {
+    fetchNotifications();
     pollIntervalRef.current = setInterval(fetchNotifications, pollInterval);
+
+    listen("notification-changed", () => {
+      fetchNotifications();
+    }).then((fn) => {
+      unlistenRef.current = fn;
+    }).catch(() => {});
+
+    const onVisible = () => {
+      fetchNotifications();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
       if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
       if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
+      unlistenRef.current?.();
+      unlistenRef.current = null;
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [fetchNotifications, pollInterval]);
 

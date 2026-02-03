@@ -87,7 +87,7 @@ export function NotificationIndicator({
 }
 
 // =============================================================================
-// Notification Toast (Shows BELOW pill when new notification arrives)
+// Notification Toast — pill-matched glass (Dynamic Island), no black box
 // =============================================================================
 
 interface NotificationToastProps {
@@ -97,72 +97,114 @@ interface NotificationToastProps {
 }
 
 export function NotificationToast({ notification, onDismiss, phase = "incoming" }: NotificationToastProps) {
-  // Don't show toast if we're past the incoming phase
   const shouldShow = notification && (phase === "incoming" || phase === "absorbing");
 
-  // Safety net: auto-dismiss toast after a short delay so it never gets "stuck"
   useEffect(() => {
     if (!notification || !shouldShow) return;
-
-    // Total on-screen time ≈ 2.3s (matches the intended animation sequence)
-    const timeout = setTimeout(() => {
+    
+    // Safety timeout: force dismissal after 3 seconds maximum (in case phase transitions get stuck)
+    const safetyTimeout = setTimeout(() => {
       onDismiss();
-    }, 2300);
-
-    return () => clearTimeout(timeout);
-    // We intentionally *don't* depend on `phase` here so the timer isn't reset
-    // if some other state change happens while the toast is visible.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notification, shouldShow, onDismiss]);
+    }, 3000);
+    
+    // Only set shorter timeout during "incoming" phase - "absorbing" phase is already transitioning out
+    // Set timeout to 1800ms to allow manual dismissal before automatic phase transition at 2000ms
+    let phaseTimeout: ReturnType<typeof setTimeout> | null = null;
+    if (phase === "incoming") {
+      phaseTimeout = setTimeout(() => {
+        onDismiss();
+      }, 1800);
+    }
+    
+    return () => {
+      clearTimeout(safetyTimeout);
+      if (phaseTimeout) clearTimeout(phaseTimeout);
+    };
+  }, [notification, shouldShow, phase, onDismiss]);
 
   return (
     <AnimatePresence mode="popLayout">
       {shouldShow && (
         <motion.div
           layoutId="notification-badge"
-          className="z-50"
+          className="z-50 rounded-[20px] overflow-visible"
           initial={notificationAnimations.toast.initial}
-          animate={phase === "absorbing" 
-            ? { y: -60, opacity: 0, scale: 0.3 }  // Animate up into pill
-            : notificationAnimations.toast.animate
+          animate={
+            phase === "absorbing"
+              ? { y: -60, opacity: 0, scale: 0.3 }
+              : notificationAnimations.toast.animate
           }
           exit={notificationAnimations.toast.exit}
-          transition={phase === "absorbing" 
-            ? notificationAnimations.absorptionSpring 
-            : notificationAnimations.spring
+          transition={
+            phase === "absorbing"
+              ? notificationAnimations.absorptionSpring
+              : notificationAnimations.spring
           }
         >
-          <motion.div
-            className="bg-black/90 backdrop-blur-xl rounded-xl border border-white/10 p-3 shadow-lg min-w-[280px]"
+          {/* Outer shell: same gradient + blur + shadow as pill — all via class + style so it always shows */}
+          <div
+            className="relative min-w-[320px] max-w-[420px] rounded-[20px] border border-white/[0.08] cursor-pointer overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.25),0_8px_48px_rgba(0,0,0,0.15),inset_0_1px_1px_rgba(255,255,255,0.08)] backdrop-blur-[12px]"
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(20,20,22,0.95) 0%, rgba(30,30,35,0.92) 50%, rgba(15,15,18,0.96) 100%)",
+            }}
             onClick={onDismiss}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === "Enter" && onDismiss()}
           >
-            <div className="flex items-start gap-3">
-              {/* App icon */}
-              <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${getAppColorGradient(notification.appName)} flex items-center justify-center flex-shrink-0`}>
-                <span className="text-white text-[12px] font-bold uppercase">
+            {/* Glass overlay (pill-style) */}
+            <div
+              className="absolute inset-0 rounded-[20px] pointer-events-none"
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0) 50%)",
+              }}
+            />
+            {/* Top edge glow (pill-style) */}
+            <div
+              className="absolute inset-x-0 top-0 h-px rounded-t-[20px] pointer-events-none"
+              style={{
+                background:
+                  "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.14) 50%, transparent 100%)",
+              }}
+            />
+
+            <div className="relative flex items-start gap-3 px-3.5 py-3">
+              <div
+                className={`w-9 h-9 rounded-xl bg-gradient-to-br ${getAppColorGradient(notification.appName)} flex items-center justify-center flex-shrink-0 border border-white/10`}
+              >
+                <span className="text-white text-[13px] font-bold uppercase tracking-wide">
                   {notification.appName.charAt(0)}
                 </span>
               </div>
 
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-white/85 text-[11px] font-medium">{notification.appName}</span>
-                  <span className="text-white/65 text-[11px]">now</span>
+              <div className="flex-1 min-w-0 py-0.5">
+                <div className="flex items-baseline gap-1.5">
+                  <span
+                    className="text-[12px] font-semibold tracking-wide"
+                    style={{
+                      color: "rgba(235, 0, 40, 0.95)",
+                      textShadow: "0 0 8px rgba(235, 0, 40, 0.3)",
+                    }}
+                  >
+                    {notification.appName}
+                  </span>
+                  <span className="text-white/50 text-[10px] font-medium uppercase tracking-wider">
+                    just now
+                  </span>
                 </div>
-                <h4 className="text-white text-[13px] font-medium truncate mt-0.5">
+                <h4 className="text-white text-[13px] font-semibold truncate mt-1 drop-shadow-sm">
                   {notification.title || "Notification"}
                 </h4>
                 {notification.body && (
-                  <p className="text-white/85 text-[12px] line-clamp-2 mt-1">
+                  <p className="text-white/80 text-[12px] line-clamp-2 mt-0.5 leading-snug">
                     {notification.body}
                   </p>
                 )}
               </div>
             </div>
-          </motion.div>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>
