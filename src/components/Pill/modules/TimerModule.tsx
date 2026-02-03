@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import type { TimerState } from "../../../hooks/useTimer";
 import type { TimerPreset } from "../../../types/pill";
+import { microInteractions } from "../animations";
 
 // =============================================================================
 // Timer Progress Ring (for idle/hover pill)
@@ -137,9 +138,15 @@ export function TimerAlert({ label, onDismiss }: TimerAlertProps) {
       
       <motion.button
         className="mt-1 px-3 py-1.5 rounded-lg bg-red-500/20 text-red-400 text-[12px] font-medium"
-        whileHover={{ scale: 1.05, backgroundColor: "rgba(239, 68, 68, 0.3)" }}
-        whileTap={{ scale: 0.95 }}
+        aria-label="Dismiss timer alert"
+        {...microInteractions.button}
         onClick={onDismiss}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onDismiss();
+          }
+        }}
       >
         Dismiss
       </motion.button>
@@ -224,31 +231,50 @@ export function TimerExpanded({
         </div>
 
         {/* Controls */}
-        <div className="flex gap-2">
+        <div className="flex gap-2" role="group" aria-label="Timer controls">
           {timer.isPaused ? (
             <motion.button
               className="px-3 py-1.5 rounded-lg bg-green-500/20 text-green-400 text-[12px] font-medium"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              aria-label="Resume timer"
+              {...microInteractions.button}
               onClick={onResume}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onResume();
+                }
+              }}
             >
               Resume
             </motion.button>
           ) : (
             <motion.button
-              className="px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 text-[12px] font-medium"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
+              className="px-3 py-1.5 rounded-pill-md bg-pill-warning-light text-pill-warning text-pill-base font-medium"
+              aria-label="Pause timer"
+              {...microInteractions.button}
               onClick={onPause}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onPause();
+                }
+              }}
             >
               Pause
             </motion.button>
           )}
           <motion.button
-            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-[12px] font-medium"
+            className="px-3 py-1.5 rounded-pill-md bg-pill-muted-lightest text-pill-muted text-pill-base font-medium"
+            aria-label="Stop timer"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={onStop}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onStop();
+              }
+            }}
           >
             Stop
           </motion.button>
@@ -263,17 +289,23 @@ export function TimerExpanded({
       <span className="text-white/90 text-[12px] text-center uppercase tracking-wider">
         Start Timer
       </span>
-      <div className="flex flex-wrap gap-1.5 justify-center">
+      <div className="flex flex-wrap gap-1.5 justify-center" role="group" aria-label="Timer presets">
         {presets.map(preset => (
           <motion.button
             key={preset.id}
-            className="px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-[12px] font-medium"
-            whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
-            whileTap={{ scale: 0.95 }}
+            className="px-3 py-1.5 rounded-pill-md bg-pill-muted-lightest text-pill-muted text-pill-base font-medium"
+            aria-label={`Start ${preset.label} timer for ${preset.workMinutes} minutes`}
+            {...microInteractions.button}
             onClick={() => onStart(preset)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onStart(preset);
+              }
+            }}
           >
             {preset.label}
-            <span className="ml-0.5 text-white/75">{preset.workMinutes}m</span>
+            <span className="ml-0.5 text-white/75" aria-hidden="true">{preset.workMinutes}m</span>
           </motion.button>
         ))}
       </div>

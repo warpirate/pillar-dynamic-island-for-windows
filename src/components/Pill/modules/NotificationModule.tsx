@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import type { SystemNotification } from "../../../hooks/useNotifications";
-import { notificationAnimations } from "../animations";
+import { notificationAnimations, microInteractions, PILL_DURATION_FAST } from "../animations";
 
 // =============================================================================
 // Shared Utilities
@@ -188,11 +188,17 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
                     just now
                   </span>
                 </div>
-                <h4 className="text-white text-[13px] font-semibold truncate mt-1 drop-shadow-sm">
+                <h4 
+                  className="text-white text-[13px] font-semibold truncate mt-1 drop-shadow-sm"
+                  title={notification.title || undefined}
+                >
                   {notification.title || "Notification"}
                 </h4>
                 {notification.body && (
-                  <p className="text-white/80 text-[12px] line-clamp-2 mt-0.5 leading-snug">
+                  <p 
+                    className="text-white/80 text-[12px] line-clamp-2 mt-0.5 leading-snug"
+                    title={notification.body}
+                  >
                     {notification.body}
                   </p>
                 )}
@@ -233,6 +239,7 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -50 }}
+      transition={{ duration: PILL_DURATION_FAST }}
     >
       <div className="flex items-start gap-2">
         {/* App icon */}
@@ -244,15 +251,26 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-white/85 text-[11px] truncate">{notification.appName}</span>
-            <span className="text-white/70 text-[10px] flex-shrink-0">{formatTime(notification.timestamp)}</span>
+          <div className="flex items-center justify-between gap-pill-xs">
+            <span 
+              className="text-pill-muted text-pill-sm truncate"
+              title={notification.appName}
+            >
+              {notification.appName}
+            </span>
+            <span className="text-white/70 text-pill-xs flex-shrink-0">{formatTime(notification.timestamp)}</span>
           </div>
-          <h4 className="text-white text-[13px] font-medium truncate mt-0.5">
+          <h4 
+            className="text-white text-pill-md font-medium truncate mt-pill-xs"
+            title={notification.title || undefined}
+          >
             {notification.title || "Notification"}
           </h4>
           {notification.body && (
-            <p className="text-white/80 text-[11px] line-clamp-2 mt-0.5">
+            <p 
+              className="text-pill-muted text-pill-sm line-clamp-2 mt-pill-xs"
+              title={notification.body}
+            >
               {notification.body}
             </p>
           )}
@@ -261,13 +279,21 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
         {/* Dismiss button */}
         <motion.button
           className="w-4 h-4 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+          aria-label={`Dismiss notification from ${notification.appName}`}
           onClick={(e) => {
             e.stopPropagation();
             onDismiss(notification.id);
           }}
-          whileTap={{ scale: 0.9 }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              onDismiss(notification.id);
+            }
+          }}
+          {...microInteractions.icon}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
         </motion.button>

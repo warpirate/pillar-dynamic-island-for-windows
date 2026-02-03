@@ -1,3 +1,23 @@
+// Reduced motion detection helper
+const getPrefersReducedMotion = () => {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+};
+
+// Helper to get reduced motion transition
+const getReducedMotionTransition = (baseTransition: any) => {
+  if (getPrefersReducedMotion()) {
+    return {
+      duration: 0.1,
+      ease: "easeOut",
+    };
+  }
+  return baseTransition;
+};
+
+// Check reduced motion preference (can be called reactively in components)
+export const prefersReducedMotion = getPrefersReducedMotion();
+
 // Spring configurations for different animation types
 export const springConfig = {
   // Default spring - balanced feel
@@ -33,7 +53,39 @@ export const springConfig = {
   },
 };
 
+// Standardized motion tokens for consistent animations
+export const PILL_SPRING_PRIMARY = getReducedMotionTransition(springConfig.snappy);
+export const PILL_SPRING_SUBTLE = getReducedMotionTransition(springConfig.gentle);
+export const PILL_SPRING_BOUNCY = getReducedMotionTransition(springConfig.bouncy);
+
+// Duration tokens
+export const PILL_DURATION_FAST = prefersReducedMotion ? 0.05 : 0.15;
+export const PILL_DURATION_MEDIUM = prefersReducedMotion ? 0.1 : 0.25;
+export const PILL_DURATION_SLOW = prefersReducedMotion ? 0.15 : 0.4;
+
+// Micro-interaction configs
+export const microInteractions = {
+  button: {
+    whileHover: prefersReducedMotion ? {} : { scale: 1.05 },
+    whileTap: { scale: 0.95 },
+    transition: PILL_SPRING_PRIMARY,
+  },
+  icon: {
+    whileHover: prefersReducedMotion ? {} : { scale: 1.1 },
+    whileTap: { scale: 0.9 },
+    transition: PILL_SPRING_PRIMARY,
+  },
+  card: {
+    whileHover: prefersReducedMotion ? {} : { scale: 1.02 },
+    whileTap: { scale: 0.98 },
+    transition: PILL_SPRING_SUBTLE,
+  },
+};
+
 // Pill dimension configurations
+// Note: These are logical dimensions (DPI-aware via Tauri's LogicalSize)
+// Tauri automatically handles scale factor conversion, so these values work correctly
+// across different DPI displays without manual scaling
 export const pillDimensions = {
   boot: {
     width: 8,
@@ -67,41 +119,57 @@ export const pillDimensions = {
     height: 280,
     borderRadius: 28,
   },
-};
+} as const;
+
+// Dimension tokens for consistent reference
+export const PILL_WIDTH_IDLE = pillDimensions.idle.width;
+export const PILL_WIDTH_EXPANDED = pillDimensions.expanded.width;
+export const PILL_HEIGHT_IDLE = pillDimensions.idle.height;
+export const PILL_HEIGHT_EXPANDED = pillDimensions.expanded.height;
 
 // Notification animation configurations
 export const notificationAnimations = {
   // Toast appearing below pill
   toast: {
-    initial: { y: 50, opacity: 0, scale: 0.8 },
+    initial: prefersReducedMotion 
+      ? { opacity: 0 } 
+      : { y: 50, opacity: 0, scale: 0.8 },
     animate: { y: 0, opacity: 1, scale: 1 },
-    exit: { y: -30, opacity: 0, scale: 0.5 },
+    exit: prefersReducedMotion 
+      ? { opacity: 0 } 
+      : { y: -30, opacity: 0, scale: 0.5 },
   },
   // Badge appearing in pill
   badge: {
-    initial: { scale: 0, opacity: 0 },
+    initial: prefersReducedMotion 
+      ? { opacity: 0 } 
+      : { scale: 0, opacity: 0 },
     animate: { scale: 1, opacity: 1 },
-    exit: { scale: 0, opacity: 0 },
+    exit: prefersReducedMotion 
+      ? { opacity: 0 } 
+      : { scale: 0, opacity: 0 },
   },
-  // Pulse effect for new notifications
-  pulse: {
-    scale: [1, 1.15, 1],
-    transition: { duration: 0.3 },
-  },
+  // Pulse effect for new notifications (disabled for reduced motion)
+  pulse: prefersReducedMotion 
+    ? {} 
+    : {
+        scale: [1, 1.15, 1],
+        transition: { duration: PILL_DURATION_MEDIUM },
+      },
   // Spring config for notification animations
-  spring: {
+  spring: getReducedMotionTransition({
     type: "spring" as const,
     stiffness: 400,
     damping: 30,
     mass: 0.8,
-  },
+  }),
   // Gentler spring for absorption animation
-  absorptionSpring: {
+  absorptionSpring: getReducedMotionTransition({
     type: "spring" as const,
     stiffness: 300,
     damping: 25,
     mass: 1,
-  },
+  }),
 };
 
 // Animation variants for the pill
@@ -174,24 +242,24 @@ export function getPillTargetStyle(
 // Idle pill slot animations (media, timer, notification badge) — enter/exit when active or turned off
 export const idleSlotAnimations = {
   left: {
-    initial: { opacity: 0, x: -10 },
+    initial: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: -10 },
     animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: -10 },
+    exit: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: -10 },
   },
   center: {
-    initial: { opacity: 0, scale: 0.92 },
+    initial: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92 },
     animate: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 0.92 },
+    exit: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.92 },
   },
   right: {
-    initial: { opacity: 0, x: 10 },
+    initial: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 10 },
     animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: 10 },
+    exit: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: 10 },
   },
-  transition: {
+  transition: getReducedMotionTransition({
     type: "spring" as const,
     stiffness: 520,
     damping: 36,
-    duration: 0.15,
-  },
+    duration: PILL_DURATION_FAST,
+  }),
 };

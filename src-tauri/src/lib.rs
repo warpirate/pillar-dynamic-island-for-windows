@@ -1320,19 +1320,40 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             {
                 use tauri::Emitter;
-                if let Ok(listener) = UserNotificationListener::Current() {
-                    if poll_notification_access().ok() == Some(UserNotificationListenerAccessStatus::Allowed) {
-                        let app_handle = app.handle().clone();
-                        let handler = TypedEventHandler::new(
-                            move |_listener: &Option<UserNotificationListener>,
-                                  _args: &Option<UserNotificationChangedEventArgs>| {
-                                let _ = app_handle.emit("notification-changed", ());
-                                Ok(())
-                            },
-                        );
-                        if listener.NotificationChanged(&handler).is_err() {
-                            eprintln!("[PILLAR] Failed to subscribe to NotificationChanged");
+                match UserNotificationListener::Current() {
+                    Ok(listener) => {
+                        match poll_notification_access() {
+                            Ok(UserNotificationListenerAccessStatus::Allowed) => {
+                                let app_handle = app.handle().clone();
+                                let handler = TypedEventHandler::new(
+                                    move |_listener: &Option<UserNotificationListener>,
+                                          _args: &Option<UserNotificationChangedEventArgs>| {
+                                        let _ = app_handle.emit("notification-changed", ());
+                                        Ok(())
+                                    },
+                                );
+                                match listener.NotificationChanged(&handler) {
+                                    Ok(_) => {
+                                        eprintln!("[PILLAR] Successfully subscribed to NotificationChanged");
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[PILLAR] Failed to subscribe to NotificationChanged: {:?}", e);
+                                        eprintln!("[PILLAR] Notifications will still work via polling fallback");
+                                    }
+                                }
+                            }
+                            Ok(status) => {
+                                eprintln!("[PILLAR] Notification access not granted: {:?}", status);
+                                eprintln!("[PILLAR] Enable notification access in Windows Settings > Privacy > Notifications");
+                            }
+                            Err(e) => {
+                                eprintln!("[PILLAR] Failed to check notification access: {}", e);
+                            }
                         }
+                    }
+                    Err(e) => {
+                        eprintln!("[PILLAR] Failed to get UserNotificationListener: {:?}", e);
+                        eprintln!("[PILLAR] Notifications will still work via polling fallback");
                     }
                 }
             }

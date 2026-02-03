@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import type { MediaInfo } from "../../../hooks/useMediaSession";
+import { microInteractions } from "../animations";
 
 // =============================================================================
 // Media Playing Indicator (animated bars for idle/hover)
@@ -114,14 +115,23 @@ export function MediaExpanded({
         
         {/* Track info - single line each, source one line */}
         <div className="flex flex-col min-w-0 flex-1">
-          <span className="text-white font-medium truncate text-[13px]">
+          <span 
+            className="text-white font-medium truncate text-pill-md"
+            title={media.title || undefined}
+          >
             {media.title || "Unknown Track"}
           </span>
-          <span className="text-white/85 text-[12px] truncate">
+          <span 
+            className="text-pill-muted text-pill-base truncate"
+            title={media.artist || undefined}
+          >
             {media.artist || "Unknown Artist"}
           </span>
           {sourceLabel && (
-            <span className="text-white/70 text-[12px] truncate mt-0.5">
+            <span 
+              className="text-white/70 text-pill-base truncate mt-pill-xs"
+              title={sourceLabel}
+            >
               via {sourceLabel}
             </span>
           )}
@@ -132,15 +142,24 @@ export function MediaExpanded({
       </div>
 
       {/* Controls */}
-      <div className="flex items-center justify-center gap-3">
+      <div className="flex items-center justify-center gap-3" role="group" aria-label="Media playback controls">
         {/* Previous */}
         <motion.button
           className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
-          whileHover={{ scale: 1.1, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
-          whileTap={{ scale: 0.9 }}
+          aria-label="Previous track"
+          whileHover={microInteractions.icon.whileHover}
+          whileTap={microInteractions.icon.whileTap}
+          style={{ backgroundColor: "rgba(255, 255, 255, 0.1)" }}
+          transition={microInteractions.icon.transition}
           onClick={onPrevious}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onPrevious();
+            }
+          }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M6 6h2v12H6V6zm3.5 6 8.5 6V6l-8.5 6z"/>
           </svg>
         </motion.button>
@@ -148,16 +167,23 @@ export function MediaExpanded({
         {/* Play/Pause */}
         <motion.button
           className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-white"
+          aria-label={media.isPlaying ? "Pause playback" : "Play playback"}
           whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.25)" }}
           whileTap={{ scale: 0.95 }}
           onClick={onPlayPause}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onPlayPause();
+            }
+          }}
         >
           {media.isPlaying ? (
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
             </svg>
           ) : (
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M8 5v14l11-7L8 5z"/>
             </svg>
           )}
@@ -166,11 +192,20 @@ export function MediaExpanded({
         {/* Next */}
         <motion.button
           className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
-          whileHover={{ scale: 1.1, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
-          whileTap={{ scale: 0.9 }}
+          aria-label="Next track"
+          whileHover={microInteractions.icon.whileHover}
+          whileTap={microInteractions.icon.whileTap}
+          style={{ backgroundColor: "rgba(255, 255, 255, 0.1)" }}
+          transition={microInteractions.icon.transition}
           onClick={onNext}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onNext();
+            }
+          }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M6 18l8.5-6L6 6v12zm8.5 0h2V6h-2v12z"/>
           </svg>
         </motion.button>

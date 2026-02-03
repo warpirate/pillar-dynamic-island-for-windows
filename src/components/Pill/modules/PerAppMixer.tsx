@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { useState, useCallback } from "react";
 import type { AudioSession } from "../../../hooks/usePerAppMixer";
+import { microInteractions } from "../animations";
 
 // =============================================================================
 // Per-App Volume Slider
@@ -65,9 +66,15 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
             className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 ${
               session.isMuted ? "bg-red-500/30 text-red-400" : "bg-white/5 text-white/80"
             }`}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
+            aria-label={`${session.isMuted ? "Unmute" : "Mute"} ${session.appName}`}
+            {...microInteractions.icon}
             onClick={() => onMuteToggle(session.processId, !session.isMuted)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onMuteToggle(session.processId, !session.isMuted);
+              }
+            }}
           >
             {session.isMuted ? (
               <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
@@ -81,9 +88,12 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
           </motion.button>
 
           {/* App name */}
-          <span className={`text-[12px] truncate flex-1 ${
-            session.isActive ? "text-white/95" : "text-white/75"
-          }`}>
+          <span 
+            className={`text-[12px] truncate flex-1 ${
+              session.isActive ? "text-white/95" : "text-white/75"
+            }`}
+            title={session.appName}
+          >
             {session.appName}
           </span>
 
@@ -114,6 +124,10 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
             onMouseDown={handleMouseDown}
             onMouseUp={handleMouseUp}
             onTouchEnd={handleMouseUp}
+            aria-label={`${session.appName} volume`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={displayPercent}
             className="absolute inset-0 w-full opacity-0 cursor-pointer"
           />
         </div>

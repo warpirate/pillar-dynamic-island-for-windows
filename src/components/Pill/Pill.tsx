@@ -10,11 +10,12 @@ import { useAudioDevices } from "../../hooks/useAudioDevices";
 import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
-import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState } from "./animations";
+import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
 import { TimerExpanded } from "./modules/TimerModule";
 import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
+import { createFocusTrap } from "../../utils/focusTrap";
 
 // Tab type for expanded view
 type ExpandedTab = "timer" | "media" | "notifications" | "settings";
@@ -46,6 +47,7 @@ const getSecondsString = () => {
 export function Pill() {
   const {
     isBooting,
+    isIdle,
     isHovering,
     isExpanded,
     handleMouseEnter,
@@ -153,6 +155,8 @@ export function Pill() {
     (notificationPhase === "showing" || notificationPhase === "idle");
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const expandedContentRef = useRef<HTMLDivElement>(null);
+  const pillToggleRef = useRef<HTMLDivElement>(null);
   const [bootPhase, setBootPhase] = useState<"dot" | "morph" | "complete">("dot");
   const [activeTab, setActiveTab] = useState<ExpandedTab>("timer");
   const [time, setTime] = useState(getTimeString);
@@ -299,6 +303,61 @@ export function Pill() {
     resizeAndCenter();
   }, [isExpanded, showNotificationToast]);
 
+  // Focus trap for expanded state
+  useEffect(() => {
+    if (!isExpanded || !expandedContentRef.current) return;
+
+    const cleanup = createFocusTrap({
+      container: expandedContentRef.current,
+      restoreFocus: pillToggleRef.current,
+      initialFocus: true,
+    });
+
+    return cleanup;
+  }, [isExpanded]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape: close expanded view
+      if (e.key === "Escape" && isExpanded) {
+        handleClickOutside();
+        return;
+      }
+
+      // Ctrl+Shift+Space: toggle expand/collapse
+      if (e.key === " " && e.ctrlKey && e.shiftKey) {
+        e.preventDefault();
+        if (isExpanded) {
+          handleClickOutside();
+        } else if (isHovering || isIdle) {
+          handleClick();
+        }
+        return;
+      }
+
+      // Arrow keys: navigate tabs (only when expanded)
+      if (isExpanded && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings"];
+        const currentIndex = tabs.indexOf(activeTab);
+        let nextIndex: number;
+        
+        if (e.key === "ArrowLeft") {
+          nextIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
+        } else {
+          nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
+        }
+        
+        setActiveTab(tabs[nextIndex]);
+        return;
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isExpanded, isHovering, isIdle, activeTab, handleClick, handleClickOutside]);
+
   // Handle click outside
   useEffect(() => {
     if (!isExpanded) return;
@@ -324,6 +383,11 @@ export function Pill() {
     <motion.div
       ref={containerRef}
       className="relative cursor-pointer"
+      role={isExpanded ? "dialog" : "button"}
+      aria-label={isExpanded ? "PILLAR Dynamic Island - Expanded" : "PILLAR Dynamic Island"}
+      aria-modal={isExpanded ? "true" : undefined}
+      aria-expanded={isExpanded ? "true" : "false"}
+      tabIndex={isExpanded ? -1 : 0}
       style={{
         width,
         height,
@@ -345,6 +409,12 @@ export function Pill() {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onClick={handleClick}
+      onKeyDown={(e) => {
+        if (!isExpanded && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          handleClick();
+        }
+      }}
     >
       {/* Glass overlay for depth */}
       <motion.div
@@ -401,6 +471,7 @@ export function Pill() {
       {/* Idle/Hover Content */}
       {!isBooting && !isExpanded && (
         <div
+          ref={pillToggleRef}
           className="absolute inset-0 flex items-center pointer-events-none select-none px-4"
           style={{
             fontVariantNumeric: "tabular-nums",
@@ -518,23 +589,26 @@ export function Pill() {
       <AnimatePresence>
         {isExpanded && (
           <motion.div
+            ref={expandedContentRef}
             className="absolute inset-0 flex flex-col p-3"
+            role="region"
+            aria-label="PILLAR expanded content"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
+            transition={{ duration: PILL_DURATION_FAST }}
           >
             {/* Header row with time - time as single unit */}
             <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-pill-md">
                 <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center flex-shrink-0">
-                  <span className="text-white text-[10px] font-bold">P</span>
+                  <span className="text-white text-pill-xs font-bold">P</span>
                 </div>
-                <span className="text-white text-[13px] font-semibold tracking-wide">PILLAR</span>
+                <span className="text-white text-pill-md font-semibold tracking-wide">PILLAR</span>
               </div>
 
               <span
-                className="text-[13px] font-medium text-white tabular-nums"
+                className="text-pill-md font-medium text-white tabular-nums"
                 style={{ fontVariantNumeric: "tabular-nums" }}
               >
                 {time}:{seconds}
@@ -542,27 +616,46 @@ export function Pill() {
             </div>
 
             {/* Tab Navigation */}
-            <div className="flex gap-0.5 mb-2 p-0.5 bg-white/5 rounded-lg">
+            <div 
+              className="flex gap-pill-xs mb-pill-md p-pill-xs bg-pill-muted-lightest rounded-pill-md"
+              role="tablist"
+              aria-label="PILLAR modules"
+            >
               {[
-                { id: "timer" as const, label: "Timer", icon: "⏱" },
-                { id: "media" as const, label: "Media", icon: "🎵" },
-                { id: "notifications" as const, label: "Notifs", icon: "🔔", badge: notifications.length > 0 ? notifications.length : undefined },
-                { id: "settings" as const, label: "Settings", icon: "⚙" },
+                { id: "timer" as const, label: "Timer", icon: "⏱", ariaLabel: "Timer module" },
+                { id: "media" as const, label: "Media", icon: "🎵", ariaLabel: "Media controls" },
+                { id: "notifications" as const, label: "Notifs", icon: "🔔", badge: notifications.length > 0 ? notifications.length : undefined, ariaLabel: `Notifications${notifications.length > 0 ? ` (${notifications.length} unread)` : ""}` },
+                { id: "settings" as const, label: "Settings", icon: "⚙", ariaLabel: "Settings" },
               ].map(tab => (
                 <motion.button
                   key={tab.id}
+                  id={`tab-${tab.id}`}
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
+                  aria-controls={`panel-${tab.id}`}
+                  aria-label={tab.ariaLabel}
+                  tabIndex={activeTab === tab.id ? 0 : -1}
                   className={`relative flex-1 py-1 px-0.5 rounded-md text-[12px] font-medium transition-colors ${
                     activeTab === tab.id 
                       ? "bg-white/15 text-white" 
                       : "text-white/80 hover:text-white"
                   }`}
                   onClick={() => setActiveTab(tab.id)}
-                  whileTap={{ scale: 0.95 }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setActiveTab(tab.id);
+                    }
+                  }}
+                  {...microInteractions.button}
                 >
-                  <span className="mr-0.5">{tab.icon}</span>
+                  <span className="mr-0.5" aria-hidden="true">{tab.icon}</span>
                   {tab.label}
                   {'badge' in tab && tab.badge && (
-                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full text-[10px] text-white font-medium flex items-center justify-center">
+                    <span 
+                      className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full text-[10px] text-white font-medium flex items-center justify-center"
+                      aria-label={`${tab.badge} notifications`}
+                    >
                       {tab.badge > 9 ? "9+" : tab.badge}
                     </span>
                   )}
@@ -576,10 +669,13 @@ export function Pill() {
                 {activeTab === "timer" && (
                   <motion.div
                     key="timer"
+                    id="panel-timer"
+                    role="tabpanel"
+                    aria-labelledby="tab-timer"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: 0.15 }}
+                    transition={{ duration: PILL_DURATION_FAST }}
                   >
                     <TimerExpanded
                       timer={timer}
@@ -598,10 +694,13 @@ export function Pill() {
                 {activeTab === "media" && (
                   <motion.div
                     key="media"
+                    id="panel-media"
+                    role="tabpanel"
+                    aria-labelledby="tab-media"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: 0.15 }}
+                    transition={{ duration: PILL_DURATION_FAST }}
                   >
                     <MediaExpanded
                       media={media}
@@ -615,15 +714,18 @@ export function Pill() {
                 {activeTab === "notifications" && (
                   <motion.div
                     key="notifications"
+                    id="panel-notifications"
+                    role="tabpanel"
+                    aria-labelledby="tab-notifications"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: 0.15 }}
+                    transition={{ duration: PILL_DURATION_FAST }}
                   >
                     <div className="flex flex-col gap-1">
-                      <span className="text-white/90 text-[13px] font-medium uppercase tracking-wider">
+                      <h2 className="text-white/90 text-[13px] font-medium uppercase tracking-wider">
                         Recent Notifications
-                      </span>
+                      </h2>
                       <NotificationsList
                         notifications={notifications}
                         hasAccess={hasNotificationAccess}
@@ -636,10 +738,13 @@ export function Pill() {
                 {activeTab === "settings" && (
                   <motion.div
                     key="settings"
+                    id="panel-settings"
+                    role="tabpanel"
+                    aria-labelledby="tab-settings"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: 0.15 }}
+                    transition={{ duration: PILL_DURATION_FAST }}
                   >
                     <QuickSettings
                       volume={volume}
@@ -661,8 +766,8 @@ export function Pill() {
             </div>
 
             {/* Footer with date */}
-            <div className="flex items-center justify-center pt-2 mt-0.5 border-t border-white/5 flex-shrink-0">
-              <span className="text-white/85 text-[12px]">{dateStr}</span>
+            <div className="flex items-center justify-center pt-pill-md mt-pill-xs border-t border-pill-border flex-shrink-0">
+              <span className="text-pill-muted text-pill-base">{dateStr}</span>
             </div>
           </motion.div>
         )}

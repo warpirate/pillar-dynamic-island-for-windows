@@ -1,10 +1,11 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { VolumeInfo } from "../../../hooks/useVolume";
 import type { BrightnessInfo } from "../../../hooks/useBrightness";
 import type { AudioDevice } from "../../../hooks/useAudioDevices";
 import type { AudioSession } from "../../../hooks/usePerAppMixer";
 import { PerAppMixer } from "./PerAppMixer";
+import { microInteractions, PILL_DURATION_FAST, PILL_DURATION_MEDIUM } from "../animations";
 
 // =============================================================================
 // Volume Slider
@@ -44,9 +45,15 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
       {/* Mute button */}
       <motion.button
         className="w-7 h-7 rounded-md bg-white/10 flex items-center justify-center text-white flex-shrink-0"
-        whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.15)" }}
-        whileTap={{ scale: 0.95 }}
+        aria-label={volume.isMuted || displayLevel === 0 ? "Unmute volume" : "Mute volume"}
+        {...microInteractions.button}
         onClick={onMuteToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onMuteToggle();
+          }
+        }}
       >
         {volume.isMuted || displayLevel === 0 ? (
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -82,6 +89,10 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
           onTouchEnd={handleMouseUp}
+          aria-label="Volume level"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={displayLevel}
           className="absolute inset-0 w-full opacity-0 cursor-pointer"
         />
       </div>
@@ -107,10 +118,19 @@ export function BrightnessSlider({ brightness, onBrightnessChange }: BrightnessS
   const [isDragging, setIsDragging] = useState(false);
   const [localLevel, setLocalLevel] = useState(brightness.level);
 
+  // Sync local level when brightness prop changes (from polling) and not dragging
+  useEffect(() => {
+    if (!isDragging) {
+      setLocalLevel(brightness.level);
+    }
+  }, [brightness.level, isDragging]);
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newLevel = parseInt(e.target.value, 10);
     setLocalLevel(newLevel);
-  }, []);
+    // Always update immediately for responsive feedback
+    onBrightnessChange(newLevel);
+  }, [onBrightnessChange]);
 
   const handleMouseUp = useCallback(() => {
     if (isDragging) {
@@ -163,9 +183,9 @@ export function BrightnessSlider({ brightness, onBrightnessChange }: BrightnessS
 
       {/* Slider */}
       <div className="flex-1 relative">
-        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden pointer-events-none">
           <motion.div
-            className="h-full bg-amber-400/60 rounded-full"
+            className="h-full bg-amber-400/60 rounded-full pointer-events-none"
             style={{ width: `${displayLevel}%` }}
             animate={{ width: `${displayLevel}%` }}
             transition={{ duration: isDragging ? 0 : 0.1 }}
@@ -175,13 +195,32 @@ export function BrightnessSlider({ brightness, onBrightnessChange }: BrightnessS
           type="range"
           min="0"
           max="100"
+          step="1"
           value={displayLevel}
           onChange={handleChange}
+          onInput={handleChange}
           onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
+          onMouseLeave={() => {
+            if (isDragging) {
+              handleMouseUp();
+            }
+          }}
+          onTouchStart={handleMouseDown}
           onTouchEnd={handleMouseUp}
-          className="absolute inset-0 w-full opacity-0 cursor-pointer"
-          disabled={!brightness.isSupported}
+          aria-label="Brightness level"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={displayLevel}
+          aria-disabled={!brightness.isSupported}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+          style={{ 
+            WebkitAppearance: 'none', 
+            appearance: 'none',
+            background: 'transparent',
+            pointerEvents: 'auto',
+            cursor: brightness.isSupported ? 'pointer' : 'not-allowed',
+          }}
         />
       </div>
 
@@ -217,8 +256,16 @@ function ToggleSwitch({ enabled, onToggle, label, description }: ToggleSwitchPro
         className={`w-9 h-4 rounded-full p-0.5 transition-colors flex-shrink-0 ${
           enabled ? "bg-green-500/60" : "bg-white/10"
         }`}
+        aria-label={`${label}: ${enabled ? "enabled" : "disabled"}`}
+        aria-pressed={enabled}
         onClick={onToggle}
-        whileTap={{ scale: 0.95 }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+        {...microInteractions.button}
       >
         <motion.div
           className="w-3 h-3 rounded-full bg-white shadow-sm"
@@ -291,7 +338,10 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
         <span className="text-white/80">
           {getDeviceIcon(currentDevice?.name || "")}
         </span>
-        <span className="text-white/90 text-[12px] truncate flex-1 text-left min-w-0">
+        <span 
+          className="text-white/90 text-[12px] truncate flex-1 text-left min-w-0"
+          title={currentDevice?.name || undefined}
+        >
           {currentDevice?.name || "Select device"}
         </span>
         <motion.svg 
@@ -314,7 +364,7 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
             initial={{ opacity: 0, y: -5 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -5 }}
-            transition={{ duration: 0.15 }}
+            transition={{ duration: PILL_DURATION_FAST }}
           >
             {devices.map((device) => (
               <button
@@ -327,9 +377,12 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
                 <span className={`flex-shrink-0 ${device.isDefault ? "text-green-400" : "text-white/70"}`}>
                   {getDeviceIcon(device.name)}
                 </span>
-                <span className={`text-[12px] truncate flex-1 text-left min-w-0 ${
-                  device.isDefault ? "text-white" : "text-white/85"
-                }`}>
+                <span 
+                  className={`text-[12px] truncate flex-1 text-left min-w-0 ${
+                    device.isDefault ? "text-white" : "text-white/85"
+                  }`}
+                  title={device.name}
+                >
                   {device.name}
                 </span>
                 {device.isDefault && (
@@ -392,21 +445,7 @@ export function QuickSettings({
         />
       </div>
 
-      {/* Brightness control (top) */}
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <span className="text-white/90 text-[12px]">Brightness</span>
-          {!brightness.isSupported && (
-            <span className="text-white/65 text-[11px]">DDC/CI N/A</span>
-          )}
-        </div>
-        <BrightnessSlider
-          brightness={brightness}
-          onBrightnessChange={onBrightnessChange}
-        />
-      </div>
-
-      {/* Volume control (bottom) */}
+      {/* Volume control (top) */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <span className="text-white/90 text-[12px]">Volume</span>
@@ -427,6 +466,20 @@ export function QuickSettings({
         />
       </div>
 
+      {/* Brightness control (bottom) */}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <span className="text-white/90 text-[12px]">Brightness</span>
+          {!brightness.isSupported && (
+            <span className="text-white/65 text-[11px]">DDC/CI N/A</span>
+          )}
+        </div>
+        <BrightnessSlider
+          brightness={brightness}
+          onBrightnessChange={onBrightnessChange}
+        />
+      </div>
+
       {/* Per-app mixer (collapsible) */}
       <AnimatePresence>
         {showMixer && (
@@ -434,7 +487,7 @@ export function QuickSettings({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: PILL_DURATION_MEDIUM }}
             className="overflow-hidden"
           >
             <div className="bg-white/5 rounded-lg p-1.5 mt-0.5">
