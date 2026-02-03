@@ -102,12 +102,7 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
   useEffect(() => {
     if (!notification || !shouldShow) return;
     
-    // Safety timeout: force dismissal after 3 seconds maximum (in case phase transitions get stuck)
-    const safetyTimeout = setTimeout(() => {
-      onDismiss();
-    }, 3000);
-    
-    // Only set shorter timeout during "incoming" phase - "absorbing" phase is already transitioning out
+    // Only set timeout during "incoming" phase - "absorbing" phase is already transitioning out
     // Set timeout to 1800ms to allow manual dismissal before automatic phase transition at 2000ms
     let phaseTimeout: ReturnType<typeof setTimeout> | null = null;
     if (phase === "incoming") {
@@ -117,7 +112,6 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
     }
     
     return () => {
-      clearTimeout(safetyTimeout);
       if (phaseTimeout) clearTimeout(phaseTimeout);
     };
   }, [notification, shouldShow, phase, onDismiss]);
