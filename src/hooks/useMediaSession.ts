@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { tauriInvoke } from "../lib/tauri";
 
 // =============================================================================
 // Types
@@ -22,27 +23,13 @@ interface UseMediaSessionReturn {
   refresh: () => Promise<void>;
 }
 
-// Tauri invoke helper - Tauri v2 uses window.__TAURI__.core.invoke
-const tauriInvoke = async <T,>(cmd: string): Promise<T | null> => {
-  // #region agent log
-  const hasTauriCore = !!(window as any).__TAURI__?.core?.invoke;
-  fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:26',message:'tauriInvoke called',data:{cmd,hasTauriCore},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-  // #endregion
-  if (!(window as any).__TAURI__?.core?.invoke) return null;
-  try {
-    const result = await (window as any).__TAURI__.core.invoke(cmd) as T;
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:32',message:'tauriInvoke success',data:{cmd,result},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    return result;
-  } catch (e) {
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:37',message:'tauriInvoke error',data:{cmd,error:String(e)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    console.error(`Tauri invoke failed (${cmd}):`, e);
-    return null;
-  }
-};
+interface RawMediaInfo {
+  title: string;
+  artist: string;
+  album?: string;
+  is_playing: boolean;
+  app_name?: string;
+}
 
 // =============================================================================
 // Hook
@@ -62,29 +49,20 @@ export function useMediaSession(
 
   // Fetch media session info
   const fetchMedia = useCallback(async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:54',message:'fetchMedia called',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     try {
-      const result = await tauriInvoke<MediaInfo | null>("get_media_session");
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:60',message:'get_media_session raw result',data:{result,resultType:typeof result,isNull:result===null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
-      // #endregion
-      
+      const result = await tauriInvoke<RawMediaInfo | null>("get_media_session");
+
       // Transform snake_case to camelCase
-      const transformed = result ? {
-        title: result.title || "",
-        artist: result.artist || "",
-        album: (result as any).album || undefined,
-        isPlaying: (result as any).is_playing || false,
-        appName: (result as any).app_name || undefined,
-      } : null;
-      
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:73',message:'transformed result',data:{transformed},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      
+      const transformed = result
+        ? {
+            title: result.title || "",
+            artist: result.artist || "",
+            album: result.album || undefined,
+            isPlaying: result.is_playing || false,
+            appName: result.app_name || undefined,
+          }
+        : null;
+
       setMedia(transformed);
       setError(null);
       
@@ -92,9 +70,6 @@ export function useMediaSession(
         onMediaChangeRef.current(transformed);
       }
     } catch (e) {
-      // #region agent log
-      fetch('http://127.0.0.1:7246/ingest/79753bc6-4c38-4cab-861d-1bc746d9b298',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'useMediaSession.ts:84',message:'fetchMedia error',data:{error:String(e)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       setError(e instanceof Error ? e.message : "Failed to get media session");
     }
   }, []);
@@ -124,27 +99,36 @@ export function useMediaSession(
 
   // Start polling when mounted
   useEffect(() => {
-    // Initial fetch
-    fetchMedia();
+    const startPolling = () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(fetchMedia, pollInterval);
+    };
 
-    // Start polling
-    pollIntervalRef.current = setInterval(fetchMedia, pollInterval);
-
-    return () => {
+    const stopPolling = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, [fetchMedia, pollInterval]);
 
-  // Refetch immediately when window becomes visible (e.g. user switched back from another app)
-  useEffect(() => {
     const onVisibilityChange = () => {
-      if (!document.hidden) fetchMedia();
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        fetchMedia();
+        startPolling();
+      }
     };
+
+    fetchMedia();
+    startPolling();
     document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [fetchMedia]);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [fetchMedia, pollInterval]);
 
   return {
     media,

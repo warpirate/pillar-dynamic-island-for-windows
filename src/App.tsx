@@ -1,21 +1,11 @@
 import { useEffect, useState, useRef } from "react";
 import { motion } from "motion/react";
 import { Pill } from "./components/Pill/Pill";
-
-// Tauri invoke helper - Tauri v2 uses window.__TAURI__.core.invoke
-const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
-  if (!(window as any).__TAURI__?.core?.invoke) return null;
-  try {
-    return await (window as any).__TAURI__.core.invoke(cmd, args) as T;
-  } catch (e) {
-    console.error(`Tauri invoke failed (${cmd}):`, e);
-    return null;
-  }
-};
+import { isTauriAvailable, tauriInvoke } from "./lib/tauri";
 
 function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const fullscreenCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullscreenCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastFullscreenState = useRef(false);
 
   // Position window on mount and handle display changes
@@ -44,7 +34,7 @@ function App() {
 
   // Fullscreen detection: poll frequently so pill hides/shows with no noticeable delay
   useEffect(() => {
-    if (!(window as any).__TAURI__?.core?.invoke) return;
+    if (!isTauriAvailable()) return;
 
     const checkFullscreen = async () => {
       const fullscreen = await tauriInvoke<boolean>("is_foreground_fullscreen");

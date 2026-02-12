@@ -14,14 +14,16 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Cross-platform brightness (WMI on Windows laptops, DDC/CI via fallback)
+
+# Windows-only deps (Android builds must not pull these)
+[target.'cfg(target_os = "windows")'.dependencies]
+# Brightness (WMI on Windows laptops, DDC/CI fallback in our code)
 brightness = "0.8"
-# Windows API bindings
-[dependencies.windows]
+
+[target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.58"
 features = [
   # Core
@@ -38,6 +40,8 @@ features = [
   "Win32_Devices_Properties",
   # Property Store for device friendly names
   "Win32_UI_Shell_PropertiesSystem",
+  # Activate app from notification (IApplicationActivationManager)
+  "Win32_UI_Shell",
   "Win32_Devices_FunctionDiscovery",
   # Brightness control (DDC/CI for monitors)
   "Win32_Devices_Display",

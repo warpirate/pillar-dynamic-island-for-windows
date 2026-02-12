@@ -93,10 +93,11 @@ export function NotificationIndicator({
 interface NotificationToastProps {
   notification: SystemNotification | null;
   onDismiss: () => void;
+  onActivate?: (id: number) => void;
   phase?: NotificationPhase;
 }
 
-export function NotificationToast({ notification, onDismiss, phase = "incoming" }: NotificationToastProps) {
+export function NotificationToast({ notification, onDismiss, onActivate, phase = "incoming" }: NotificationToastProps) {
   const shouldShow = notification && (phase === "incoming" || phase === "absorbing");
 
   useEffect(() => {
@@ -142,10 +143,20 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
               background:
                 "linear-gradient(135deg, rgba(20,20,22,0.95) 0%, rgba(30,30,35,0.92) 50%, rgba(15,15,18,0.96) 100%)",
             }}
-            onClick={onDismiss}
+            onClick={(e) => {
+              e.stopPropagation();
+              onActivate?.(notification.id);
+              onDismiss();
+            }}
             role="button"
             tabIndex={0}
-            onKeyDown={(e) => e.key === "Enter" && onDismiss()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.stopPropagation();
+                onActivate?.(notification.id);
+                onDismiss();
+              }
+            }}
           >
             {/* Glass overlay (pill-style) */}
             <div
@@ -218,9 +229,10 @@ export function NotificationToast({ notification, onDismiss, phase = "incoming" 
 interface NotificationCardProps {
   notification: SystemNotification;
   onDismiss: (id: number) => void;
+  onActivate?: (id: number) => void;
 }
 
-export function NotificationCard({ notification, onDismiss }: NotificationCardProps) {
+export function NotificationCard({ notification, onDismiss, onActivate }: NotificationCardProps) {
   // Format timestamp
   const formatTime = (timestamp: number) => {
     const now = Date.now();
@@ -232,14 +244,27 @@ export function NotificationCard({ notification, onDismiss }: NotificationCardPr
     return new Date(timestamp).toLocaleDateString();
   };
 
+  const handleActivate = () => {
+    onActivate?.(notification.id);
+  };
+
   return (
     <motion.div
-      className="bg-white/5 rounded-md p-2 hover:bg-white/8 transition-colors group"
+      className="bg-white/5 rounded-md p-2 hover:bg-white/8 transition-colors group cursor-pointer"
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -50 }}
       transition={{ duration: PILL_DURATION_FAST }}
+      onClick={handleActivate}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleActivate();
+        }
+      }}
+      role="button"
+      tabIndex={0}
     >
       <div className="flex items-start gap-2">
         {/* App icon */}
@@ -310,9 +335,10 @@ interface NotificationsListProps {
   notifications: SystemNotification[];
   hasAccess: boolean;
   onDismiss: (id: number) => void;
+  onActivate?: (id: number) => void;
 }
 
-export function NotificationsList({ notifications, hasAccess, onDismiss }: NotificationsListProps) {
+export function NotificationsList({ notifications, hasAccess, onDismiss, onActivate }: NotificationsListProps) {
   if (!hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-4 text-center">
@@ -345,6 +371,7 @@ export function NotificationsList({ notifications, hasAccess, onDismiss }: Notif
             key={notification.id}
             notification={notification}
             onDismiss={onDismiss}
+            onActivate={onActivate}
           />
         ))}
       </AnimatePresence>

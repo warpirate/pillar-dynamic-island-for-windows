@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { tauriInvoke } from "../lib/tauri";
 
 // =============================================================================
 // Types
@@ -16,17 +17,6 @@ interface UseAudioDevicesReturn {
   isLoading: boolean;
   refresh: () => Promise<void>;
 }
-
-// Tauri invoke helper - Tauri v2 uses window.__TAURI__.core.invoke
-const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
-  if (!(window as any).__TAURI__?.core?.invoke) return null;
-  try {
-    return await (window as any).__TAURI__.core.invoke(cmd, args) as T;
-  } catch (e) {
-    console.error(`Tauri invoke failed (${cmd}):`, e);
-    return null;
-  }
-};
 
 // =============================================================================
 // Hook
@@ -71,16 +61,34 @@ export function useAudioDevices(pollInterval = 5000): UseAudioDevicesReturn {
 
   // Start polling when mounted
   useEffect(() => {
-    // Initial fetch
-    fetchDevices();
+    const startPolling = () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(fetchDevices, pollInterval);
+    };
 
-    // Poll for device changes
-    pollIntervalRef.current = setInterval(fetchDevices, pollInterval);
-
-    return () => {
+    const stopPolling = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        fetchDevices();
+        startPolling();
+      }
+    };
+
+    fetchDevices();
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [fetchDevices, pollInterval]);
 

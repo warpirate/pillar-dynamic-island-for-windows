@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo, useContext, createContext } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import type { 
   InteractionState, 
   ContentState, 
@@ -24,59 +24,11 @@ const NOTIFICATION_DURATION_MS = 5000;
 
 export type { InteractionState, ContentState, ContentStateType };
 
-interface PillStateContextValue {
-  // Interaction state (hover, expanded, etc.)
-  interactionState: InteractionState;
-  isBooting: boolean;
-  isIdle: boolean;
-  isHovering: boolean;
-  isExpanded: boolean;
-  
-  // Content states (multiple can be active)
-  contentStates: ContentState[];
-  activeContentState: ContentState | null; // Highest priority
-  backgroundStates: ContentState[]; // Lower priority states shown as indicators
-  
-  // Interaction handlers
-  handleMouseEnter: () => void;
-  handleMouseLeave: () => void;
-  handleClick: () => void;
-  handleClickOutside: () => void;
-  completeBootAnimation: () => void;
-  
-  // Content state management
-  addContentState: (state: ContentState) => void;
-  removeContentState: (id: string) => void;
-  updateContentState: (id: string, updates: Record<string, unknown>) => void;
-  clearContentStates: (type?: ContentStateType) => void;
-  
-  // Convenience methods for specific states
-  setTimerState: (timer: TimerRunningState["data"] | null) => void;
-  setTimerAlert: (alert: TimerAlertState["data"] | null) => void;
-  setMediaState: (media: MediaState["data"] | null) => void;
-  showNotification: (notification: Omit<NotificationState["data"], "expiresAt">) => void;
-}
-
 // =============================================================================
-// Context
-// =============================================================================
-
-const PillStateContext = createContext<PillStateContextValue | null>(null);
-
-export function usePillStateContext(): PillStateContextValue {
-  const context = useContext(PillStateContext);
-  if (!context) {
-    throw new Error("usePillStateContext must be used within PillStateProvider");
-  }
-  return context;
-}
-
-// =============================================================================
-// Legacy Hook (for backward compatibility with Pill.tsx)
+// Hook
 // =============================================================================
 
 interface UsePillStateReturn {
-  state: InteractionState;
   isBooting: boolean;
   isIdle: boolean;
   isHovering: boolean;
@@ -297,7 +249,6 @@ export function usePillState(): UsePillStateReturn {
   }), [interactionState]);
 
   return {
-    state: interactionState,
     ...derivedInteractionState,
     handleMouseEnter,
     handleMouseLeave,

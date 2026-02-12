@@ -16,19 +16,10 @@ import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
 import { createFocusTrap } from "../../utils/focusTrap";
+import { tauriInvoke } from "../../lib/tauri";
 
 // Tab type for expanded view
 type ExpandedTab = "timer" | "media" | "notifications" | "settings";
-
-declare global {
-  interface Window {
-    __TAURI__?: {
-      core: {
-        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-      };
-    };
-  }
-}
 
 // Helper to get current time string
 const getTimeString = () => {
@@ -271,12 +262,9 @@ export function Pill() {
   // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
   useEffect(() => {
     const setClickThrough = async (ignore: boolean) => {
-      if (window.__TAURI__) {
-        try {
-          await window.__TAURI__.core.invoke("set_click_through", { ignore });
-        } catch (e) {
-          console.error("Failed to set click through:", e);
-        }
+      const ok = await tauriInvoke("set_click_through", { ignore });
+      if (ok === null) {
+        console.error("Failed to set click through");
       }
     };
     setClickThrough(false);
@@ -286,17 +274,14 @@ export function Pill() {
   const showNotificationToast = !isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && !!latestNotification;
   useEffect(() => {
     const resizeAndCenter = async () => {
-      if (window.__TAURI__) {
-        try {
-          const dims = isExpanded ? pillDimensions.expanded : pillDimensions.idle;
-          const w = dims.width + 60;
-          // When toast is visible, add enough height for pill + gap + toast (~100px for toast)
-          const extraHeight = showNotificationToast ? 120 : 100;
-          const h = dims.height + extraHeight;
-          await window.__TAURI__.core.invoke("resize_and_center", { width: w, height: h });
-        } catch (e) {
-          console.error("Failed to resize/position window:", e);
-        }
+      const dims = isExpanded ? pillDimensions.expanded : pillDimensions.idle;
+      const w = dims.width + 60;
+      // When toast is visible, add enough height for pill + gap + toast (~100px for toast)
+      const extraHeight = showNotificationToast ? 120 : 100;
+      const h = dims.height + extraHeight;
+      const ok = await tauriInvoke("resize_and_center", { width: w, height: h });
+      if (ok === null) {
+        console.error("Failed to resize/position window");
       }
     };
 
@@ -457,12 +442,25 @@ export function Pill() {
         <StateIndicators states={backgroundStates} position="right" />
       )}
 
-      {/* Notification toast (appears BELOW pill, then animates into badge) */}
+      {/* Notification toast (appears BELOW pill, then animates into badge) — click opens the app */}
       {!isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && latestNotification && (
-        <div className="absolute top-full mt-3 left-1/2 -translate-x-1/2">
+        <div
+          className="absolute top-full mt-3 left-1/2 -translate-x-1/2 z-[100]"
+          onClickCapture={(e) => {
+            e.stopPropagation();
+            const id = latestNotification.id;
+            tauriInvoke("activate_notification", { id }).catch(() => {});
+            clearLatestNotification();
+          }}
+        >
           <NotificationToast
             notification={latestNotification}
             onDismiss={clearLatestNotification}
+            onActivate={async (id) => {
+              try {
+                await tauriInvoke("activate_notification", { id });
+              } catch (_) { /* ignore */ }
+            }}
             phase={notificationPhase}
           />
         </div>
@@ -730,6 +728,13 @@ export function Pill() {
                         notifications={notifications}
                         hasAccess={hasNotificationAccess}
                         onDismiss={dismissNotification}
+                        onActivate={async (id) => {
+                          try {
+                            await tauriInvoke("activate_notification", { id });
+                            dismissNotification(id);
+                            handleClickOutside();
+                          } catch (_) { /* ignore */ }
+                        }}
                       />
                     </div>
                   </motion.div>

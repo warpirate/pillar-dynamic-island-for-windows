@@ -172,45 +172,6 @@ export const notificationAnimations = {
   }),
 };
 
-// Animation variants for the pill
-export const pillVariants = {
-  boot: {
-    width: pillDimensions.boot.width,
-    height: pillDimensions.boot.height,
-    borderRadius: pillDimensions.boot.borderRadius,
-    opacity: 0,
-    scale: 0,
-  },
-  bootVisible: {
-    width: pillDimensions.boot.width,
-    height: pillDimensions.boot.height,
-    borderRadius: pillDimensions.boot.borderRadius,
-    opacity: 1,
-    scale: 1,
-  },
-  idle: {
-    width: pillDimensions.idle.width,
-    height: pillDimensions.idle.height,
-    borderRadius: pillDimensions.idle.borderRadius,
-    opacity: 1,
-    scale: 1,
-  },
-  hover: {
-    width: pillDimensions.hover.width,
-    height: pillDimensions.hover.height,
-    borderRadius: pillDimensions.hover.borderRadius,
-    opacity: 1,
-    scale: 1,
-  },
-  expanded: {
-    width: pillDimensions.expanded.width,
-    height: pillDimensions.expanded.height,
-    borderRadius: pillDimensions.expanded.borderRadius,
-    opacity: 1,
-    scale: 1,
-  },
-};
-
 // Boot animation sequence duration in ms
 export const bootAnimationDuration = {
   dotAppear: 200,

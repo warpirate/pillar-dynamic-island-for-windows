@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { tauriInvoke } from "../lib/tauri";
 
 // =============================================================================
 // Types
@@ -27,17 +28,6 @@ interface UseNotificationsReturn {
   refresh: () => Promise<void>;
   clearLatest: () => void;
 }
-
-// Tauri invoke helper - Tauri v2 uses window.__TAURI__.core.invoke
-const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
-  if (!(window as any).__TAURI__?.core?.invoke) return null;
-  try {
-    return await (window as any).__TAURI__.core.invoke(cmd, args) as T;
-  } catch (e) {
-    console.error(`Tauri invoke failed (${cmd}):`, e);
-    return null;
-  }
-};
 
 // =============================================================================
 // Hook
@@ -187,8 +177,20 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
   // Real-time: listen for Windows notification-changed event from backend; fallback poll as backup
   useEffect(() => {
+    const startPolling = () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(fetchNotifications, pollInterval);
+    };
+
+    const stopPolling = () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+
     fetchNotifications();
-    pollIntervalRef.current = setInterval(fetchNotifications, pollInterval);
+    startPolling();
 
     listen("notification-changed", () => {
       fetchNotifications();
@@ -196,19 +198,24 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       unlistenRef.current = fn;
     }).catch(() => {});
 
-    const onVisible = () => {
-      fetchNotifications();
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        fetchNotifications();
+        startPolling();
+      }
     };
-    document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      stopPolling();
       if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
       if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
       if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
       unlistenRef.current?.();
       unlistenRef.current = null;
-      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [fetchNotifications, pollInterval]);
 

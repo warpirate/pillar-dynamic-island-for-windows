@@ -18,7 +18,7 @@
 - **Smooth animations** powered by Motion and React
 - **Near-zero resource usage** when idle
 - **Smart positioning** that adapts to display changes and fullscreen apps
-- **Click-through when idle** - won't interfere with your workflow
+- **Reliable interaction model** - overlay remains clickable for consistent hover/expand behavior
 - **Built with Tauri** for a lightweight, secure desktop application
 
 ## 🚀 Quick Start
@@ -101,7 +101,7 @@ PILLAR creates a borderless, transparent overlay window that:
 - ✅ Always on top
 - ✅ Hidden from taskbar and Alt+Tab
 - ✅ DPI-aware and GPU-accelerated
-- ✅ Click-through when idle
+- ✅ Consistently clickable for hover/expand interactions
 - ✅ Repositions on display changes
 
 ## 🔧 Configuration

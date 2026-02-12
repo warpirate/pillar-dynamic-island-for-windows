@@ -1,19 +1,29 @@
 use tauri::Manager;
+#[cfg(desktop)]
 use tauri::menu::{Menu, MenuItem};
+#[cfg(desktop)]
 use tauri::tray::TrayIconBuilder;
 use serde::{Deserialize, Serialize};
 use std::thread;
 use std::time::Duration;
+
+// Windows-only imports (Android builds must not compile Win32 code)
+#[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowRect, GetWindowLongPtrW, GWL_STYLE, WS_POPUP, WS_CAPTION,
+    AllowSetForegroundWindow, GetForegroundWindow, GetWindowRect, GetWindowLongPtrW, GWL_STYLE, WS_POPUP, WS_CAPTION,
 };
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{ASFW_ANY, SW_SHOWNORMAL};
+#[cfg(target_os = "windows")]
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSession,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus,
     GlobalSystemMediaTransportControlsSessionMediaProperties,
 };
+#[cfg(target_os = "windows")]
 use windows::Foundation::AsyncStatus;
+#[cfg(target_os = "windows")]
 use windows::Win32::Media::Audio::{
     eRender, eConsole, eMultimedia,
     Endpoints::IAudioEndpointVolume,
@@ -22,20 +32,34 @@ use windows::Win32::Media::Audio::{
     ISimpleAudioVolume, AudioSessionState,
     DEVICE_STATE_ACTIVE,
 };
+#[cfg(target_os = "windows")]
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ};
+#[cfg(target_os = "windows")]
 use windows::Win32::System::Com::StructuredStorage::PropVariantToStringAlloc;
+#[cfg(target_os = "windows")]
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::Shell::ShellExecuteW;
+#[cfg(target_os = "windows")]
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
+#[cfg(target_os = "windows")]
 use windows::Win32::Devices::Display::{
     GetNumberOfPhysicalMonitorsFromHMONITOR, GetPhysicalMonitorsFromHMONITOR,
     GetMonitorBrightness, SetMonitorBrightness, DestroyPhysicalMonitor,
     PHYSICAL_MONITOR,
 };
+#[cfg(target_os = "windows")]
 use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY};
+#[cfg(target_os = "windows")]
 use windows::core::{HSTRING, Interface};
+#[cfg(target_os = "windows")]
 use windows::Foundation::TypedEventHandler;
+#[cfg(target_os = "windows")]
 use windows::UI::Notifications::Management::{UserNotificationListener, UserNotificationListenerAccessStatus};
+#[cfg(target_os = "windows")]
 use windows::UI::Notifications::{UserNotification, UserNotificationChangedEventArgs};
+
+#[cfg(target_os = "windows")]
 use brightness::blocking::Brightness;
 
 
@@ -104,6 +128,7 @@ pub struct SystemNotification {
 // Async Helpers - Poll Windows IAsyncOperation until complete
 // =============================================================================
 
+#[cfg(target_os = "windows")]
 fn poll_session_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager, String> {
     let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
         .map_err(|e| format!("Failed to request session manager: {}", e))?;
@@ -122,6 +147,7 @@ fn poll_session_manager() -> Result<GlobalSystemMediaTransportControlsSessionMan
     Err("Timeout waiting for session manager".to_string())
 }
 
+#[cfg(target_os = "windows")]
 fn poll_media_properties(session: &GlobalSystemMediaTransportControlsSession) 
     -> Result<GlobalSystemMediaTransportControlsSessionMediaProperties, String> 
 {
@@ -141,6 +167,7 @@ fn poll_media_properties(session: &GlobalSystemMediaTransportControlsSession)
     Err("Timeout waiting for media properties".to_string())
 }
 
+#[cfg(target_os = "windows")]
 fn poll_bool_op(op: windows::Foundation::IAsyncOperation<bool>) -> Result<bool, String> {
     for _ in 0..100 {
         let status = op.Status().map_err(|e| format!("Failed to get status: {}", e))?;
@@ -157,6 +184,7 @@ fn poll_bool_op(op: windows::Foundation::IAsyncOperation<bool>) -> Result<bool, 
 
 /// Set click-through mode for the window
 /// When enabled, mouse events pass through the window to apps behind it
+#[cfg(desktop)]
 #[tauri::command]
 fn set_click_through(window: tauri::Window, ignore: bool) -> Result<(), String> {
     window
@@ -164,7 +192,14 @@ fn set_click_through(window: tauri::Window, ignore: bool) -> Result<(), String> 
         .map_err(|e| format!("Failed to set click-through: {}", e))
 }
 
+#[cfg(not(desktop))]
+#[tauri::command]
+fn set_click_through(_window: tauri::Window, _ignore: bool) -> Result<(), String> {
+    Err("Click-through not supported on mobile".to_string())
+}
+
 /// Resize window to specified dimensions
+#[cfg(desktop)]
 #[tauri::command]
 fn resize_window(window: tauri::Window, width: f64, height: f64) -> Result<(), String> {
     if width <= 0.0 || height <= 0.0 {
@@ -175,7 +210,14 @@ fn resize_window(window: tauri::Window, width: f64, height: f64) -> Result<(), S
         .map_err(|e| format!("Failed to resize: {}", e))
 }
 
+#[cfg(not(desktop))]
+#[tauri::command]
+fn resize_window(_window: tauri::Window, _width: f64, _height: f64) -> Result<(), String> {
+    Err("Window resize not supported on mobile".to_string())
+}
+
 /// Position window at top-center of primary monitor
+#[cfg(desktop)]
 #[tauri::command]
 fn position_window(window: tauri::Window) -> Result<(), String> {
     let monitor = window
@@ -197,10 +239,17 @@ fn position_window(window: tauri::Window) -> Result<(), String> {
         .map_err(|e| format!("Failed to position: {}", e))
 }
 
+#[cfg(not(desktop))]
+#[tauri::command]
+fn position_window(_window: tauri::Window) -> Result<(), String> {
+    Err("Window positioning not supported on mobile".to_string())
+}
+
 /// Check if the foreground window is "content" fullscreen (video/game), not just window fullscreen.
 /// We want: YouTube/Netflix video fullscreen, games → true.
 /// We don't want: browser F11 fullscreen, any app maximized/fullscreen → false.
 /// Uses window style: WS_POPUP or borderless (no caption) = content fullscreen; normal caption = window fullscreen.
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn is_foreground_fullscreen(window: tauri::Window) -> Result<bool, String> {
     // Get monitor info, return false if unavailable (safe default)
@@ -252,8 +301,15 @@ fn is_foreground_fullscreen(window: tauri::Window) -> Result<bool, String> {
     Ok(content_fullscreen)
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn is_foreground_fullscreen(_window: tauri::Window) -> Result<bool, String> {
+    Ok(false)
+}
+
 /// Resize window and re-center in a single atomic operation
 /// Prevents visual glitches from separate resize + position calls
+#[cfg(desktop)]
 #[tauri::command]
 fn resize_and_center(window: tauri::Window, width: f64, height: f64) -> Result<(), String> {
     if width <= 0.0 || height <= 0.0 {
@@ -279,6 +335,12 @@ fn resize_and_center(window: tauri::Window, width: f64, height: f64) -> Result<(
     Ok(())
 }
 
+#[cfg(not(desktop))]
+#[tauri::command]
+fn resize_and_center(_window: tauri::Window, _width: f64, _height: f64) -> Result<(), String> {
+    Err("Resize/center not supported on mobile".to_string())
+}
+
 /// Get current monitor scale factor for DPI-aware calculations
 #[tauri::command]
 fn get_scale_factor(window: tauri::Window) -> Result<f64, String> {
@@ -295,6 +357,7 @@ fn get_scale_factor(window: tauri::Window) -> Result<f64, String> {
 // =============================================================================
 
 /// Helper to get the current media session
+#[cfg(target_os = "windows")]
 fn get_current_session() -> Result<GlobalSystemMediaTransportControlsSession, String> {
     let manager = poll_session_manager()?;
     manager.GetCurrentSession()
@@ -302,44 +365,16 @@ fn get_current_session() -> Result<GlobalSystemMediaTransportControlsSession, St
 }
 
 /// Get current media session info (now playing)
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_media_session() -> Result<Option<MediaInfo>, String> {
-    // #region agent log
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(r"d:\PILLAR - Dynamic Island\.cursor\debug.log") {
-        let _ = writeln!(f, r#"{{"location":"lib.rs:281","message":"get_media_session called","timestamp":{},"sessionId":"debug-session","hypothesisId":"A"}}"#, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-    }
-    // #endregion
-    
     // Get session manager
     let manager = poll_session_manager()?;
-    
-    // #region agent log
-    // Check all sessions first
-    if let Ok(sessions) = manager.GetSessions() {
-        let count = sessions.Size().unwrap_or(0);
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(r"d:\PILLAR - Dynamic Island\.cursor\debug.log") {
-            let _ = writeln!(f, r#"{{"location":"lib.rs:294","message":"GetSessions count","data":{{"totalSessions":{}}},"timestamp":{},"sessionId":"debug-session","hypothesisId":"A"}}"#, count, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-        }
-    }
-    // #endregion
-    
+
     // Get the current session
     let session = match manager.GetCurrentSession() {
-        Ok(s) => {
-            // #region agent log
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(r"d:\PILLAR - Dynamic Island\.cursor\debug.log") {
-                let _ = writeln!(f, r#"{{"location":"lib.rs:304","message":"GetCurrentSession success","timestamp":{},"sessionId":"debug-session","hypothesisId":"A"}}"#, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-            }
-            // #endregion
-            s
-        },
-        Err(e) => {
-            // #region agent log
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(r"d:\PILLAR - Dynamic Island\.cursor\debug.log") {
-                let _ = writeln!(f, r#"{{"location":"lib.rs:312","message":"GetCurrentSession returned None/Error","data":{{"error":"{}"}},"timestamp":{},"sessionId":"debug-session","hypothesisId":"A"}}"#, e, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
-            }
-            // #endregion
+        Ok(s) => s,
+        Err(_) => {
             return Ok(None); // No active media session
         },
     };
@@ -389,7 +424,14 @@ fn get_media_session() -> Result<Option<MediaInfo>, String> {
     }))
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_media_session() -> Result<Option<MediaInfo>, String> {
+    Ok(None)
+}
+
 /// Play/pause media
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn media_play_pause() -> Result<(), String> {
     let session = get_current_session()?;
@@ -401,7 +443,14 @@ fn media_play_pause() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn media_play_pause() -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
 /// Skip to next track
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn media_next() -> Result<(), String> {
     let session = get_current_session()?;
@@ -413,7 +462,14 @@ fn media_next() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn media_next() -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
 /// Skip to previous track
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn media_previous() -> Result<(), String> {
     let session = get_current_session()?;
@@ -425,11 +481,18 @@ fn media_previous() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn media_previous() -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
 // =============================================================================
 // Volume Control Commands
 // =============================================================================
 
 /// Get system volume
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_system_volume() -> Result<VolumeInfo, String> {
     unsafe {
@@ -464,7 +527,14 @@ fn get_system_volume() -> Result<VolumeInfo, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_system_volume() -> Result<VolumeInfo, String> {
+    Ok(VolumeInfo { level: 0, is_muted: false })
+}
+
 /// Set system volume (0-100)
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn set_system_volume(level: u32) -> Result<(), String> {
     if level > 100 {
@@ -490,7 +560,14 @@ fn set_system_volume(level: u32) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_system_volume(_level: u32) -> Result<(), String> {
+    Err("Volume control not supported on this platform".to_string())
+}
+
 /// Toggle mute
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn toggle_mute() -> Result<bool, String> {
     unsafe {
@@ -516,11 +593,18 @@ fn toggle_mute() -> Result<bool, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn toggle_mute() -> Result<bool, String> {
+    Err("Volume control not supported on this platform".to_string())
+}
+
 // =============================================================================
 // Audio Device Commands
 // =============================================================================
 
 /// Helper to get device friendly name from IMMDevice using Windows Property Store
+#[cfg(target_os = "windows")]
 fn get_device_name(device: &IMMDevice) -> Result<String, String> {
     unsafe {
         // Open the property store for read access
@@ -552,6 +636,7 @@ fn get_device_name(device: &IMMDevice) -> Result<String, String> {
 }
 
 /// Helper to get device ID from IMMDevice
+#[cfg(target_os = "windows")]
 fn get_device_id(device: &IMMDevice) -> Result<String, String> {
     unsafe {
         let id = device.GetId()
@@ -570,6 +655,7 @@ fn get_device_id(device: &IMMDevice) -> Result<String, String> {
 }
 
 /// List all audio output devices
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
     unsafe {
@@ -611,7 +697,14 @@ fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
+    Ok(Vec::new())
+}
+
 /// Get the default audio device
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_default_audio_device() -> Result<AudioDevice, String> {
     unsafe {
@@ -634,11 +727,18 @@ fn get_default_audio_device() -> Result<AudioDevice, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_default_audio_device() -> Result<AudioDevice, String> {
+    Err("Audio devices not supported on this platform".to_string())
+}
+
 // =============================================================================
 // Per-App Volume Commands
 // =============================================================================
 
 /// List all audio sessions (apps playing audio)
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn list_audio_sessions() -> Result<Vec<AudioSession>, String> {
     unsafe {
@@ -754,7 +854,14 @@ fn list_audio_sessions() -> Result<Vec<AudioSession>, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn list_audio_sessions() -> Result<Vec<AudioSession>, String> {
+    Ok(Vec::new())
+}
+
 /// Set volume for a specific audio session
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn set_session_volume(process_id: u32, level: f32) -> Result<(), String> {
     if level < 0.0 || level > 1.0 {
@@ -810,7 +917,14 @@ fn set_session_volume(process_id: u32, level: f32) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_session_volume(_process_id: u32, _level: f32) -> Result<(), String> {
+    Err("Per-app volume not supported on this platform".to_string())
+}
+
 /// Mute/unmute a specific audio session
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn set_session_mute(process_id: u32, muted: bool) -> Result<(), String> {
     unsafe {
@@ -862,6 +976,12 @@ fn set_session_mute(process_id: u32, muted: bool) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_session_mute(_process_id: u32, _muted: bool) -> Result<(), String> {
+    Err("Per-app mute not supported on this platform".to_string())
+}
+
 // =============================================================================
 // Brightness Control Types
 // =============================================================================
@@ -879,6 +999,7 @@ pub struct BrightnessInfo {
 // =============================================================================
 
 /// Helper to get physical monitor handle
+#[cfg(target_os = "windows")]
 fn get_primary_physical_monitor() -> Result<PHYSICAL_MONITOR, String> {
     unsafe {
         // Get the primary monitor
@@ -904,6 +1025,7 @@ fn get_primary_physical_monitor() -> Result<PHYSICAL_MONITOR, String> {
 }
 
 /// Get system brightness: try WMI (laptops) first via brightness crate, then DDC/CI (external monitors)
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_system_brightness() -> Result<BrightnessInfo, String> {
     // 1. Try brightness crate first (WMI - works on laptop internal panels)
@@ -972,6 +1094,17 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_system_brightness() -> Result<BrightnessInfo, String> {
+    Ok(BrightnessInfo {
+        level: 100,
+        min: 0,
+        max: 100,
+        is_supported: false,
+    })
+}
+
 /// Payload for set_system_brightness (frontend sends { level: 0..100 })
 #[derive(Deserialize)]
 struct SetBrightnessPayload {
@@ -979,6 +1112,7 @@ struct SetBrightnessPayload {
 }
 
 /// Set system brightness (0-100): try WMI (laptops) first, then DDC/CI (external monitors)
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn set_system_brightness(payload: SetBrightnessPayload) -> Result<(), String> {
     let level = payload.level.min(100);
@@ -1022,11 +1156,18 @@ fn set_system_brightness(payload: SetBrightnessPayload) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn set_system_brightness(_payload: SetBrightnessPayload) -> Result<(), String> {
+    Err("Brightness control not supported on this platform".to_string())
+}
+
 // =============================================================================
 // Notification Commands
 // =============================================================================
 
 /// Helper to poll notification listener access
+#[cfg(target_os = "windows")]
 fn poll_notification_access() -> Result<UserNotificationListenerAccessStatus, String> {
     let listener = UserNotificationListener::Current()
         .map_err(|e| format!("Failed to get notification listener: {}", e))?;
@@ -1048,7 +1189,13 @@ fn poll_notification_access() -> Result<UserNotificationListenerAccessStatus, St
     Err("Timeout waiting for notification access".to_string())
 }
 
+#[cfg(not(target_os = "windows"))]
+fn poll_notification_access() -> Result<(), String> {
+    Err("Notifications not supported on this platform".to_string())
+}
+
 /// Helper to poll notifications list
+#[cfg(target_os = "windows")]
 fn poll_notifications_list(listener: &UserNotificationListener) -> Result<Vec<UserNotification>, String> {
     let op = listener.GetNotificationsAsync(windows::UI::Notifications::NotificationKinds::Toast)
         .map_err(|e| format!("Failed to get notifications: {}", e))?;
@@ -1077,14 +1224,27 @@ fn poll_notifications_list(listener: &UserNotificationListener) -> Result<Vec<Us
     Err("Timeout waiting for notifications".to_string())
 }
 
+#[cfg(not(target_os = "windows"))]
+fn poll_notifications_list(_listener: &()) -> Result<Vec<()>, String> {
+    Err("Notifications not supported on this platform".to_string())
+}
+
 /// Request notification access and check if granted
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn check_notification_access() -> Result<bool, String> {
     let status = poll_notification_access()?;
     Ok(status == UserNotificationListenerAccessStatus::Allowed)
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn check_notification_access() -> Result<bool, String> {
+    Ok(false)
+}
+
 /// Get recent notifications
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_notifications() -> Result<Vec<SystemNotification>, String> {
     let listener = UserNotificationListener::Current()
@@ -1190,7 +1350,97 @@ fn get_notifications() -> Result<Vec<SystemNotification>, String> {
     Ok(result)
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_notifications() -> Result<Vec<SystemNotification>, String> {
+    Ok(Vec::new())
+}
+
+/// Activate (bring to foreground) the app that created the notification with the given ID.
+/// Uses the same mechanism as Windows Action Center: the app is identified by its
+/// AppUserModelId (AUMID); we launch it via the shell (explorer shell:AppsFolder\AUMID)
+/// so both UWP and desktop apps (e.g. WhatsApp) are activated correctly.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn activate_notification(id: u32) -> Result<(), String> {
+    let listener = UserNotificationListener::Current()
+        .map_err(|e| format!("Failed to get notification listener: {}", e))?;
+
+    let access = poll_notification_access()?;
+    if access != UserNotificationListenerAccessStatus::Allowed {
+        return Err("Notification access not granted".to_string());
+    }
+
+    let notifications = poll_notifications_list(&listener)?;
+    let notif = notifications
+        .iter()
+        .find(|n| n.Id().unwrap_or(0) == id)
+        .ok_or_else(|| format!("Notification {} not found", id))?;
+
+    let app_info = notif
+        .AppInfo()
+        .map_err(|e| format!("Failed to get app info: {}", e))?;
+
+    let aumid = app_info
+        .AppUserModelId()
+        .map_err(|e| format!("AppUserModelId not available: {}", e))?
+        .to_string();
+    if aumid.is_empty() {
+        return Err("AppUserModelId is empty".to_string());
+    }
+
+    // Allow the activated app to take foreground (same as when user clicks in Action Center).
+    unsafe {
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
+    }
+
+    // Activate via shell:AppsFolder\{AUMID}. Try two methods:
+    // 1) Open the shell path directly (lpFile = "shell:AppsFolder\AUMID")
+    // 2) If that fails, run explorer.exe with the path as argument (for desktop apps)
+    let shell_path = HSTRING::from(format!("shell:AppsFolder\\{}", aumid));
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            &HSTRING::from("open"),
+            &shell_path,
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize > 32 {
+        return Ok(());
+    }
+    // Fallback: explorer.exe shell:AppsFolder\AUMID (some apps need this)
+    let explorer = HSTRING::from("explorer.exe");
+    let params = HSTRING::from(format!("shell:AppsFolder\\{}", aumid));
+    let result2 = unsafe {
+        ShellExecuteW(
+            None,
+            &HSTRING::from("open"),
+            &explorer,
+            &params,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if result2.0 as isize <= 32 {
+        return Err(format!(
+            "Failed to activate app (ShellExecute returned {})",
+            result2.0 as isize
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn activate_notification(_id: u32) -> Result<(), String> {
+    Err("Notification activation not supported on this platform".to_string())
+}
+
 /// Dismiss a notification by ID
+#[cfg(target_os = "windows")]
 #[tauri::command]
 fn dismiss_notification(id: u32) -> Result<(), String> {
     let listener = UserNotificationListener::Current()
@@ -1200,6 +1450,11 @@ fn dismiss_notification(id: u32) -> Result<(), String> {
         .map_err(|e| format!("Failed to dismiss notification: {}", e))
 }
 
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn dismiss_notification(_id: u32) -> Result<(), String> {
+    Err("Notifications not supported on this platform".to_string())
+}
 // =============================================================================
 // Auto-Start Commands
 // =============================================================================
@@ -1243,7 +1498,7 @@ fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_shell::init());
+    let mut builder = tauri::Builder::default();
 
     #[cfg(target_os = "windows")]
     {
@@ -1284,37 +1539,49 @@ pub fn run() {
             check_notification_access,
             get_notifications,
             dismiss_notification,
+            activate_notification,
             // Auto-start
             check_autostart_enabled,
             set_autostart_enabled
         ])
         .setup(|app| {
-            // System tray with Quit so the app can be closed (window has no title bar / taskbar)
-            let quit_i = MenuItem::with_id(app, "quit", "Quit PILLAR", true, None::<&str>)
-                .map_err(|e| e.to_string())?;
-            let menu = Menu::with_items(app, &[&quit_i]).map_err(|e| e.to_string())?;
-            let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(move |app, event| {
-                    if event.id.as_ref() == "quit" {
-                        app.exit(0);
-                    }
-                })
-                .build(app)
-                .map_err(|e| e.to_string())?;
+            // Desktop-only UX (tray icon / window positioning). Mobile builds should skip this.
+            #[cfg(desktop)]
+            {
+                // System tray with Quit so the app can be closed (window has no title bar / taskbar)
+                let quit_i = MenuItem::with_id(app, "quit", "Quit PILLAR", true, None::<&str>)
+                    .map_err(|e| e.to_string())?;
+                let menu = Menu::with_items(app, &[&quit_i]).map_err(|e| e.to_string())?;
+                let mut tray_builder = TrayIconBuilder::new()
+                    .menu(&menu)
+                    .show_menu_on_left_click(true)
+                    .on_menu_event(move |app, event| {
+                        if event.id.as_ref() == "quit" {
+                            app.exit(0);
+                        }
+                    });
 
-            let window = app.get_webview_window("main").unwrap();
-            if let Some(monitor) = window.primary_monitor().unwrap() {
-                let monitor_size = monitor.size();
-                let scale_factor = monitor.scale_factor();
-                let window_width = 450.0;
-                let x = (monitor_size.width as f64 / scale_factor) / 2.0 - window_width / 2.0;
-                let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
-                    x,
-                    y: 0.0,
-                }));
+                if let Some(icon) = app.default_window_icon() {
+                    tray_builder = tray_builder.icon(icon.clone());
+                }
+
+                let _tray = tray_builder
+                    .build(app)
+                    .map_err(|e| e.to_string())?;
+
+                // Window positioning is a desktop API; ignore failures.
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(Some(monitor)) = window.primary_monitor() {
+                        let monitor_size = monitor.size();
+                        let scale_factor = monitor.scale_factor();
+                        let window_width = 450.0;
+                        let x = (monitor_size.width as f64 / scale_factor) / 2.0 - window_width / 2.0;
+                        let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+                            x,
+                            y: 0.0,
+                        }));
+                    }
+                }
             }
 
             #[cfg(target_os = "windows")]

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { tauriInvoke } from "../lib/tauri";
 
 // =============================================================================
 // Types
@@ -17,17 +18,6 @@ interface UseBrightnessReturn {
   setBrightness: (level: number) => Promise<void>;
   refresh: () => Promise<void>;
 }
-
-// Tauri invoke helper - Tauri v2 uses window.__TAURI__.core.invoke
-const tauriInvoke = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
-  if (!(window as any).__TAURI__?.core?.invoke) return null;
-  try {
-    return await (window as any).__TAURI__.core.invoke(cmd, args) as T;
-  } catch (e) {
-    console.error(`Tauri invoke failed (${cmd}):`, e);
-    return null;
-  }
-};
 
 // =============================================================================
 // Hook
@@ -80,16 +70,34 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
 
   // Start polling when mounted
   useEffect(() => {
-    // Initial fetch
-    fetchBrightness();
+    const startPolling = () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = setInterval(fetchBrightness, pollInterval);
+    };
 
-    // Poll less frequently for brightness (it rarely changes externally)
-    pollIntervalRef.current = setInterval(fetchBrightness, pollInterval);
-
-    return () => {
+    const stopPolling = () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        fetchBrightness();
+        startPolling();
+      }
+    };
+
+    fetchBrightness();
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [fetchBrightness, pollInterval]);
 
