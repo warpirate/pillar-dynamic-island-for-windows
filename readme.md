@@ -124,6 +124,17 @@ The application behavior can be configured through the Tauri configuration file 
 }
 ```
 
+### Prism AI (Groq) setup
+
+Prism AI uses the Groq API from the Tauri backend. Set the API key **in the same terminal** where you run the app (or set it before `npm run tauri build` to embed it in the .exe):
+
+```powershell
+$env:GROQ_API_KEY = "your_groq_api_key_here"
+npm run tauri dev
+```
+
+If the key is missing, the app will show: *"GROQ_API_KEY is not set. Set it before building or running PILLAR."*
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

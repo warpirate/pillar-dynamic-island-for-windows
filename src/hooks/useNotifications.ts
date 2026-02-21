@@ -177,9 +177,15 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
   // Real-time: listen for Windows notification-changed event from backend; fallback poll as backup
   useEffect(() => {
+    let isMounted = true;
+    
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(fetchNotifications, pollInterval);
+      if (isMounted) {
+        pollIntervalRef.current = setInterval(() => {
+          if (isMounted) fetchNotifications();
+        }, pollInterval);
+      }
     };
 
     const stopPolling = () => {
@@ -189,26 +195,34 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       }
     };
 
-    fetchNotifications();
+    if (isMounted) fetchNotifications();
     startPolling();
 
-    listen("notification-changed", () => {
-      fetchNotifications();
-    }).then((fn) => {
-      unlistenRef.current = fn;
-    }).catch(() => {});
+    if (isMounted) {
+      listen("notification-changed", () => {
+        if (isMounted) fetchNotifications();
+      }).then((fn) => {
+        if (isMounted) unlistenRef.current = fn;
+      }).catch(() => {});
+    }
 
     const onVisibilityChange = () => {
+      if (!isMounted) return;
+      
       if (document.hidden) {
         stopPolling();
       } else {
-        fetchNotifications();
+        if (isMounted) fetchNotifications();
         startPolling();
       }
     };
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    
+    if (isMounted) {
+      document.addEventListener("visibilitychange", onVisibilityChange);
+    }
 
     return () => {
+      isMounted = false;
       stopPolling();
       if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
       if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
@@ -217,7 +231,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       unlistenRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [fetchNotifications, pollInterval]);
+  }, [pollInterval, fetchNotifications]);
 
   return {
     notifications,

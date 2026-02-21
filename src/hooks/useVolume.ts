@@ -62,9 +62,15 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
 
   // Start polling when mounted
   useEffect(() => {
+    let isMounted = true;
+    
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(fetchVolume, pollInterval);
+      if (isMounted) {
+        pollIntervalRef.current = setInterval(() => {
+          if (isMounted) fetchVolume();
+        }, pollInterval);
+      }
     };
 
     const stopPolling = () => {
@@ -75,19 +81,25 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
     };
 
     const handleVisibilityChange = () => {
+      if (!isMounted) return;
+      
       if (document.hidden) {
         stopPolling();
       } else {
-        fetchVolume();
+        if (isMounted) fetchVolume();
         startPolling();
       }
     };
 
-    fetchVolume();
+    if (isMounted) fetchVolume();
     startPolling();
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    
+    if (isMounted) {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
 
     return () => {
+      isMounted = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };

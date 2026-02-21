@@ -34,6 +34,7 @@ export async function tauriInvoke<T>(
     return await invoke<T>(cmd, args);
   } catch (error) {
     console.error(`Tauri invoke failed (${cmd}):`, error);
-    return null;
+    // Rethrow so callers (e.g. usePrismAI) can show the backend error message
+    throw error;
   }
 }

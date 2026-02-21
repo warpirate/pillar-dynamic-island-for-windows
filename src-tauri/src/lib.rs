@@ -3,6 +3,8 @@ use tauri::Manager;
 use tauri::menu::{Menu, MenuItem};
 #[cfg(desktop)]
 use tauri::tray::TrayIconBuilder;
+use once_cell::sync::Lazy;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::thread;
 use std::time::Duration;
@@ -122,6 +124,320 @@ pub struct SystemNotification {
     pub title: String,
     pub body: String,
     pub timestamp: u64,          // Unix timestamp in milliseconds
+}
+
+// =============================================================================
+// Prism AI Types
+// =============================================================================
+
+static HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
+    Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .expect("failed to build HTTP client")
+});
+
+const PRISM_MODEL: &str = "openai/gpt-oss-20b";
+const PRISM_MAX_TOKENS: u32 = 320;
+const PRISM_TEMPERATURE: f32 = 0.2;
+const MAX_MESSAGE_CHARS: usize = 800;
+const MAX_CONTEXT_BLOCKS: usize = 8;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrismChatRequest {
+    pub user_message: String,
+    pub conversation: Vec<PrismConversationMessage>,
+    pub context_blocks: Vec<PrismContextBlock>,
+    pub allow_actions: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrismConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrismContextBlock {
+    pub kind: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrismAction {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(rename = "type")]
+    pub action_type: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub args: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrismUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PrismChatResponse {
+    pub reply: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<PrismAction>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<PrismUsage>,
+}
+
+#[derive(Debug, Serialize)]
+struct GroqChatRequest {
+    model: &'static str,
+    messages: Vec<GroqChatMessage>,
+    temperature: f32,
+    max_tokens: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct GroqChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqChatResponse {
+    choices: Vec<GroqChoice>,
+    #[serde(default)]
+    usage: Option<GroqUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqChoice {
+    message: GroqChoiceMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqChoiceMessage {
+    content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroqUsage {
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
+    #[serde(default)]
+    total_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrismModelOutput {
+    reply: String,
+    #[serde(default)]
+    actions: Option<Vec<PrismAction>>,
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn normalize_role(role: &str) -> &str {
+    let lower = role.trim().to_lowercase();
+    if lower == "assistant" {
+        "assistant"
+    } else {
+        "user"
+    }
+}
+
+fn extract_json_candidate(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if serde_json::from_str::<PrismModelOutput>(trimmed).is_ok() {
+        return Some(trimmed.to_string());
+    }
+
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    Some(trimmed[start..=end].to_string())
+}
+
+fn is_supported_action_type(action_type: &str) -> bool {
+    matches!(
+        action_type,
+        "start_timer"
+            | "pause_timer"
+            | "resume_timer"
+            | "stop_timer"
+            | "set_volume"
+            | "toggle_mute"
+            | "set_brightness"
+            | "media_play_pause"
+            | "media_next"
+            | "media_previous"
+    )
+}
+
+fn parse_model_output(raw_content: &str, allow_actions: bool) -> (String, Option<Vec<PrismAction>>) {
+    let fallback = raw_content.trim();
+    let Some(candidate) = extract_json_candidate(fallback) else {
+        return (fallback.to_string(), None);
+    };
+
+    let parsed = serde_json::from_str::<PrismModelOutput>(&candidate);
+    let Ok(parsed_output) = parsed else {
+        return (fallback.to_string(), None);
+    };
+
+    let reply = if parsed_output.reply.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        parsed_output.reply.trim().to_string()
+    };
+
+    if !allow_actions {
+        return (reply, None);
+    }
+
+    let actions = parsed_output.actions.map(|items| {
+        items
+            .into_iter()
+            .filter_map(|mut action| {
+                if !is_supported_action_type(&action.action_type) {
+                    return None;
+                }
+                if let Some(args) = &action.args {
+                    if !args.is_object() {
+                        action.args = None;
+                    }
+                }
+                Some(action)
+            })
+            .take(5)
+            .collect::<Vec<_>>()
+    });
+
+    (reply, actions.filter(|items| !items.is_empty()))
+}
+
+#[tauri::command]
+async fn prism_chat(request: PrismChatRequest) -> Result<PrismChatResponse, String> {
+    // Runtime env var first (for dev). Then compile-time if set at build (for .exe). No key in source.
+    let api_key: String = std::env::var("GROQ_API_KEY")
+        .ok()
+        .or_else(|| option_env!("GROQ_API_KEY").map(String::from))
+        .ok_or_else(|| "GROQ_API_KEY is not set. Set it before building or running PILLAR.".to_string())?;
+
+    let user_message = truncate_chars(request.user_message.trim(), MAX_MESSAGE_CHARS);
+    if user_message.is_empty() {
+        return Err("userMessage cannot be empty.".to_string());
+    }
+
+    let mut messages: Vec<GroqChatMessage> = Vec::new();
+
+    let system_prompt = if request.allow_actions {
+        "You are Prism AI for the PILLAR desktop app. Use concise, actionable responses. You receive selective app context blocks. Return strict JSON with keys: reply (string), actions (array, optional). Allowed action types: start_timer, pause_timer, resume_timer, stop_timer, set_volume, toggle_mute, set_brightness, media_play_pause, media_next, media_previous. Every action may include: id, label, description, args (object). Never include unsupported action types."
+    } else {
+        "You are Prism AI for the PILLAR desktop app. Use concise, actionable responses. You receive selective app context blocks. Return strict JSON with key: reply (string). Do not include actions."
+    };
+    messages.push(GroqChatMessage {
+        role: "system".to_string(),
+        content: system_prompt.to_string(),
+    });
+
+    let context_summary = request
+        .context_blocks
+        .into_iter()
+        .take(MAX_CONTEXT_BLOCKS)
+        .map(|block| {
+            let kind = truncate_chars(block.kind.trim(), 32);
+            let content = truncate_chars(block.content.trim(), 400);
+            format!("{kind}: {content}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if !context_summary.trim().is_empty() {
+        messages.push(GroqChatMessage {
+            role: "user".to_string(),
+            content: format!("PILLAR_CONTEXT\n{}", context_summary),
+        });
+    }
+
+    for item in request.conversation.into_iter().take(12) {
+        let content = truncate_chars(item.content.trim(), MAX_MESSAGE_CHARS);
+        if content.is_empty() {
+            continue;
+        }
+        messages.push(GroqChatMessage {
+            role: normalize_role(&item.role).to_string(),
+            content,
+        });
+    }
+
+    messages.push(GroqChatMessage {
+        role: "user".to_string(),
+        content: user_message,
+    });
+
+    let payload = GroqChatRequest {
+        model: PRISM_MODEL,
+        messages,
+        temperature: PRISM_TEMPERATURE,
+        max_tokens: PRISM_MAX_TOKENS,
+    };
+
+    let response = HTTP_CLIENT
+        .post("https://api.groq.com/openai/v1/chat/completions")
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to call Groq API: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Groq API error ({status}): {}",
+            truncate_chars(&body, 260)
+        ));
+    }
+
+    let response_payload = response
+        .json::<GroqChatResponse>()
+        .await
+        .map_err(|e| format!("Invalid Groq response payload: {e}"))?;
+
+    let raw_reply = response_payload
+        .choices
+        .first()
+        .and_then(|choice| choice.message.content.clone())
+        .unwrap_or_default();
+
+    let (reply, actions) = parse_model_output(&raw_reply, request.allow_actions);
+    if reply.trim().is_empty() {
+        return Err("Model returned an empty reply.".to_string());
+    }
+
+    let usage = response_payload.usage.map(|value| PrismUsage {
+        prompt_tokens: value.prompt_tokens,
+        completion_tokens: value.completion_tokens,
+        total_tokens: value.total_tokens,
+    });
+
+    Ok(PrismChatResponse { reply, actions, usage })
 }
 
 // =============================================================================
@@ -1229,6 +1545,66 @@ fn poll_notifications_list(_listener: &()) -> Result<Vec<()>, String> {
     Err("Notifications not supported on this platform".to_string())
 }
 
+/// Subscribe to Windows NotificationChanged with retry for transient startup races.
+/// Some systems return HRESULT 0x80070490 (Element not found) even when polling works.
+#[cfg(target_os = "windows")]
+fn subscribe_notification_changed(
+    listener: &UserNotificationListener,
+    app_handle: &tauri::AppHandle,
+) -> bool {
+    const RETRIES: usize = 3;
+    const RETRY_DELAY_MS: u64 = 500;
+    const E_ELEMENT_NOT_FOUND: i32 = 0x80070490u32 as i32;
+
+    for attempt in 1..=RETRIES {
+        let handle_for_event = app_handle.clone();
+        let handler = TypedEventHandler::new(
+            move |_listener: &Option<UserNotificationListener>,
+                  _args: &Option<UserNotificationChangedEventArgs>| {
+                use tauri::Emitter;
+                let _ = handle_for_event.emit("notification-changed", ());
+                Ok(())
+            },
+        );
+
+        match listener.NotificationChanged(&handler) {
+            Ok(_) => {
+                if attempt > 1 {
+                    eprintln!(
+                        "[PILLAR] Subscribed to NotificationChanged after retry {}",
+                        attempt
+                    );
+                } else {
+                    eprintln!("[PILLAR] Successfully subscribed to NotificationChanged");
+                }
+                return true;
+            }
+            Err(e) => {
+                let code = e.code().0;
+                let is_not_found = code == E_ELEMENT_NOT_FOUND;
+
+                // Retry only for the common startup race case.
+                if is_not_found && attempt < RETRIES {
+                    thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+                    continue;
+                }
+
+                if is_not_found {
+                    eprintln!(
+                        "[PILLAR] NotificationChanged not available on this system; using polling fallback"
+                    );
+                } else {
+                    eprintln!("[PILLAR] Failed to subscribe to NotificationChanged: {:?}", e);
+                    eprintln!("[PILLAR] Notifications will still work via polling fallback");
+                }
+                return false;
+            }
+        }
+    }
+
+    false
+}
+
 /// Request notification access and check if granted
 #[cfg(target_os = "windows")]
 #[tauri::command]
@@ -1542,7 +1918,9 @@ pub fn run() {
             activate_notification,
             // Auto-start
             check_autostart_enabled,
-            set_autostart_enabled
+            set_autostart_enabled,
+            // Prism AI
+            prism_chat
         ])
         .setup(|app| {
             // Desktop-only UX (tray icon / window positioning). Mobile builds should skip this.
@@ -1586,28 +1964,12 @@ pub fn run() {
 
             #[cfg(target_os = "windows")]
             {
-                use tauri::Emitter;
                 match UserNotificationListener::Current() {
                     Ok(listener) => {
                         match poll_notification_access() {
                             Ok(UserNotificationListenerAccessStatus::Allowed) => {
                                 let app_handle = app.handle().clone();
-                                let handler = TypedEventHandler::new(
-                                    move |_listener: &Option<UserNotificationListener>,
-                                          _args: &Option<UserNotificationChangedEventArgs>| {
-                                        let _ = app_handle.emit("notification-changed", ());
-                                        Ok(())
-                                    },
-                                );
-                                match listener.NotificationChanged(&handler) {
-                                    Ok(_) => {
-                                        eprintln!("[PILLAR] Successfully subscribed to NotificationChanged");
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[PILLAR] Failed to subscribe to NotificationChanged: {:?}", e);
-                                        eprintln!("[PILLAR] Notifications will still work via polling fallback");
-                                    }
-                                }
+                                let _ = subscribe_notification_changed(&listener, &app_handle);
                             }
                             Ok(status) => {
                                 eprintln!("[PILLAR] Notification access not granted: {:?}", status);

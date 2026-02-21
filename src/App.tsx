@@ -36,11 +36,21 @@ function App() {
   useEffect(() => {
     if (!isTauriAvailable()) return;
 
+    let isMounted = true;
     const checkFullscreen = async () => {
-      const fullscreen = await tauriInvoke<boolean>("is_foreground_fullscreen");
-      if (fullscreen !== null && fullscreen !== lastFullscreenState.current) {
-        lastFullscreenState.current = fullscreen;
-        setIsFullscreen(fullscreen);
+      if (!isMounted) return;
+      
+      try {
+        const fullscreen = await tauriInvoke<boolean>("is_foreground_fullscreen");
+        if (isMounted && fullscreen !== null && fullscreen !== lastFullscreenState.current) {
+          lastFullscreenState.current = fullscreen;
+          setIsFullscreen(fullscreen);
+        }
+      } catch (error) {
+        // Silently handle Tauri invoke errors to prevent crashes
+        if (isMounted) {
+          console.warn('Fullscreen check failed:', error);
+        }
       }
     };
 
@@ -48,14 +58,18 @@ function App() {
     checkFullscreen();
 
     const POLL_MS = 300; // Fast response when entering/leaving fullscreen
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
     const startPolling = () => {
-      if (fullscreenCheckRef.current) clearInterval(fullscreenCheckRef.current);
-      fullscreenCheckRef.current = setInterval(checkFullscreen, POLL_MS);
+      if (intervalId) clearInterval(intervalId);
+      intervalId = setInterval(checkFullscreen, POLL_MS);
+      fullscreenCheckRef.current = intervalId;
     };
 
     const stopPolling = () => {
-      if (fullscreenCheckRef.current) {
-        clearInterval(fullscreenCheckRef.current);
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
         fullscreenCheckRef.current = null;
       }
     };
@@ -74,6 +88,7 @@ function App() {
     startPolling();
 
     return () => {
+      isMounted = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };

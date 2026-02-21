@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, useSpring, useTransform, AnimatePresence } from "motion/react";
 import { usePillState } from "../../hooks/usePillState";
 import { useTimer } from "../../hooks/useTimer";
@@ -9,17 +9,20 @@ import { useBrightness } from "../../hooks/useBrightness";
 import { useAudioDevices } from "../../hooks/useAudioDevices";
 import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
+import { usePrismAI } from "../../hooks/usePrismAI";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
 import { TimerExpanded } from "./modules/TimerModule";
 import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
+import { PrismModule } from "./modules/PrismModule";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
 import { createFocusTrap } from "../../utils/focusTrap";
 import { tauriInvoke } from "../../lib/tauri";
+import type { PrismAction } from "../../types/prism";
 
 // Tab type for expanded view
-type ExpandedTab = "timer" | "media" | "notifications" | "settings";
+type ExpandedTab = "timer" | "media" | "notifications" | "settings" | "prism";
 
 // Helper to get current time string
 const getTimeString = () => {
@@ -140,7 +143,28 @@ export function Pill() {
     dismissNotification,
     clearLatest: clearLatestNotification,
   } = useNotifications(); // Real-time via Windows NotificationChanged event; fallback poll every 30s
-  
+
+  const {
+    messages: prismMessages,
+    actions: prismActions,
+    actionMode: prismActionMode,
+    usage: prismUsage,
+    isLoading: prismLoading,
+    error: prismError,
+    setActionMode: setPrismActionMode,
+    setActions: setPrismActions,
+    clearChat: clearPrismChat,
+    sendMessage: sendPrismMessage,
+  } = usePrismAI({
+    timer,
+    media,
+    volume,
+    brightness,
+    notifications,
+    audioSessions,
+    autoStartEnabled,
+  });
+
   // Whether to show notification badge in the pill
   const hasNotificationBadge = notifications.length > 0 && 
     (notificationPhase === "showing" || notificationPhase === "idle");
@@ -276,8 +300,9 @@ export function Pill() {
     const resizeAndCenter = async () => {
       const dims = isExpanded ? pillDimensions.expanded : pillDimensions.idle;
       const w = dims.width + 60;
-      // When toast is visible, add enough height for pill + gap + toast (~100px for toast)
-      const extraHeight = showNotificationToast ? 120 : 100;
+      // Only add extra height when expanded (for content) or when toast is visible (for toast space)
+      // When collapsed with no toast, use exact pill dimensions to avoid blocking clicks below
+      const extraHeight = isExpanded ? 100 : (showNotificationToast ? 120 : 0);
       const h = dims.height + extraHeight;
       const ok = await tauriInvoke("resize_and_center", { width: w, height: h });
       if (ok === null) {
@@ -324,7 +349,7 @@ export function Pill() {
       // Arrow keys: navigate tabs (only when expanded)
       if (isExpanded && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
-        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings"];
+        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings", "prism"];
         const currentIndex = tabs.indexOf(activeTab);
         let nextIndex: number;
         
@@ -342,6 +367,91 @@ export function Pill() {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isExpanded, isHovering, isIdle, activeTab, handleClick, handleClickOutside]);
+
+  const runPrismAction = useCallback(
+    async (action: PrismAction): Promise<string> => {
+      const args = action.args ?? {};
+
+      switch (action.type) {
+        case "start_timer": {
+          const minutesValue = Number(args.minutes);
+          if (!Number.isFinite(minutesValue) || minutesValue <= 0) {
+            throw new Error("Invalid minutes for start_timer.");
+          }
+          const minutes = Math.max(1, Math.min(720, Math.round(minutesValue)));
+          const label =
+            typeof args.label === "string" && args.label.trim()
+              ? args.label.trim().slice(0, 40)
+              : `Prism ${minutes}m`;
+          startTimer({ label, minutes });
+          return `Timer started: ${label} (${minutes}m).`;
+        }
+        case "pause_timer":
+          pauseTimer();
+          return "Timer paused.";
+        case "resume_timer":
+          resumeTimer();
+          return "Timer resumed.";
+        case "stop_timer":
+          stopTimer();
+          return "Timer stopped.";
+        case "set_volume": {
+          const levelValue = Number(args.level);
+          if (!Number.isFinite(levelValue)) {
+            throw new Error("Invalid level for set_volume.");
+          }
+          const level = Math.max(0, Math.min(100, Math.round(levelValue)));
+          await setVolume(level);
+          return `Volume set to ${level}%.`;
+        }
+        case "toggle_mute":
+          await toggleMute();
+          return "Mute toggled.";
+        case "set_brightness": {
+          const levelValue = Number(args.level);
+          if (!Number.isFinite(levelValue)) {
+            throw new Error("Invalid level for set_brightness.");
+          }
+          const level = Math.max(0, Math.min(100, Math.round(levelValue)));
+          await setBrightness(level);
+          return `Brightness set to ${level}%.`;
+        }
+        case "media_play_pause":
+          await playPause();
+          return "Media play/pause sent.";
+        case "media_next":
+          await mediaNext();
+          return "Media next sent.";
+        case "media_previous":
+          await mediaPrevious();
+          return "Media previous sent.";
+        default:
+          throw new Error(`Unsupported action type: ${action.type}`);
+      }
+    },
+    [
+      mediaNext,
+      mediaPrevious,
+      pauseTimer,
+      playPause,
+      resumeTimer,
+      setBrightness,
+      setVolume,
+      startTimer,
+      stopTimer,
+      toggleMute,
+    ]
+  );
+
+  // When Actions mode is on and Prism returns actions, run them directly (no extra buttons)
+  useEffect(() => {
+    if (!prismActionMode || prismActions.length === 0) return;
+    const toRun = [...prismActions];
+    setPrismActions([]);
+    toRun.forEach((action) => {
+      runPrismAction(action).catch(() => {});
+    });
+  }, [prismActionMode, prismActions, setPrismActions, runPrismAction]);
 
   // Handle click outside
   useEffect(() => {
@@ -383,7 +493,7 @@ export function Pill() {
         overflow: "visible",
         background: isBooting && bootPhase === "dot"
           ? "radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(200,200,200,0.6) 100%)"
-          : "linear-gradient(135deg, rgba(20, 20, 22, 0.85) 0%, rgba(30, 30, 35, 0.75) 50%, rgba(15, 15, 18, 0.9) 100%)",
+          : "linear-gradient(135deg, rgba(20, 20, 22, 0.94) 0%, rgba(30, 30, 35, 0.90) 50%, rgba(15, 15, 18, 0.96) 100%)",
       }}
       initial={{ opacity: 0, scale: 0 }}
       animate={{ 
@@ -588,7 +698,7 @@ export function Pill() {
         {isExpanded && (
           <motion.div
             ref={expandedContentRef}
-            className="absolute inset-0 flex flex-col p-3"
+            className="absolute inset-0 flex flex-col p-2.5"
             role="region"
             aria-label="PILLAR expanded content"
             initial={{ opacity: 0 }}
@@ -597,7 +707,7 @@ export function Pill() {
             transition={{ duration: PILL_DURATION_FAST }}
           >
             {/* Header row with time - time as single unit */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-pill-md">
                 <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-pill-xs font-bold">P</span>
@@ -615,7 +725,7 @@ export function Pill() {
 
             {/* Tab Navigation */}
             <div 
-              className="flex gap-pill-xs mb-pill-md p-pill-xs bg-pill-muted-lightest rounded-pill-md"
+              className="flex gap-pill-xs mb-1.5 p-pill-xs bg-pill-muted-lightest rounded-pill-md"
               role="tablist"
               aria-label="PILLAR modules"
             >
@@ -624,6 +734,7 @@ export function Pill() {
                 { id: "media" as const, label: "Media", icon: "🎵", ariaLabel: "Media controls" },
                 { id: "notifications" as const, label: "Notifs", icon: "🔔", badge: notifications.length > 0 ? notifications.length : undefined, ariaLabel: `Notifications${notifications.length > 0 ? ` (${notifications.length} unread)` : ""}` },
                 { id: "settings" as const, label: "Settings", icon: "⚙", ariaLabel: "Settings" },
+                { id: "prism" as const, label: "Prism", icon: "AI", ariaLabel: "Prism AI assistant" },
               ].map(tab => (
                 <motion.button
                   key={tab.id}
@@ -662,7 +773,7 @@ export function Pill() {
             </div>
 
             {/* Main content area - Tabbed modules */}
-            <div className="flex-1 flex flex-col justify-center min-h-0 overflow-hidden py-0.5 overflow-y-auto">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden w-full">
               <AnimatePresence mode="wait">
                 {activeTab === "timer" && (
                   <motion.div
@@ -721,9 +832,23 @@ export function Pill() {
                     transition={{ duration: PILL_DURATION_FAST }}
                   >
                     <div className="flex flex-col gap-1">
-                      <h2 className="text-white/90 text-[13px] font-medium uppercase tracking-wider">
-                        Recent Notifications
-                      </h2>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <h2 className="text-white/90 text-[13px] font-medium uppercase tracking-wider">
+                          Recent Notifications
+                        </h2>
+                        {notifications.length > 0 && (
+                          <motion.button
+                            type="button"
+                            className="px-2 py-0.5 rounded text-[10px] bg-white/10 text-white/70 hover:text-white/90 hover:bg-white/15 transition-colors"
+                            onClick={() => {
+                              notifications.forEach((n) => dismissNotification(n.id));
+                            }}
+                            {...microInteractions.button}
+                          >
+                            Clear all
+                          </motion.button>
+                        )}
+                      </div>
                       <NotificationsList
                         notifications={notifications}
                         hasAccess={hasNotificationAccess}
@@ -764,6 +889,31 @@ export function Pill() {
                       onSessionMuteToggle={setSessionMute}
                       autoStartEnabled={autoStartEnabled}
                       onAutoStartToggle={() => setAutoStartEnabled(!autoStartEnabled)}
+                    />
+                  </motion.div>
+                )}
+
+                {activeTab === "prism" && (
+                  <motion.div
+                    key="prism"
+                    id="panel-prism"
+                    role="tabpanel"
+                    aria-labelledby="tab-prism"
+                    className="w-full h-full min-h-0 flex flex-col"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: PILL_DURATION_FAST }}
+                  >
+                    <PrismModule
+                      messages={prismMessages}
+                      actionMode={prismActionMode}
+                      usage={prismUsage}
+                      isLoading={prismLoading}
+                      error={prismError}
+                      onSendMessage={sendPrismMessage}
+                      onToggleActionMode={setPrismActionMode}
+                      onClearChat={clearPrismChat}
                     />
                   </motion.div>
                 )}

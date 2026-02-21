@@ -190,14 +190,14 @@ export function getPillTargetStyle(
 ): { width: number; height: number; borderRadius: number; blur: number; shadow: number } {
   if (state === "expanded") {
     const d = pillDimensions.expanded;
-    return { ...d, blur: 16, shadow: 0.35 };
+    return { ...d, blur: 20, shadow: 0.35 };
   }
   if (state === "hover") {
     const d = hasNotificationBadge ? pillDimensions.hoverWithNotifications : pillDimensions.hover;
-    return { ...d, blur: 12, shadow: 0.25 };
+    return { ...d, blur: 14, shadow: 0.25 };
   }
   const d = hasNotificationBadge ? pillDimensions.idleWithNotifications : pillDimensions.idle;
-  return { ...d, blur: 8, shadow: 0.2 };
+  return { ...d, blur: 10, shadow: 0.2 };
 }
 
 // Idle pill slot animations (media, timer, notification badge) — enter/exit when active or turned off
