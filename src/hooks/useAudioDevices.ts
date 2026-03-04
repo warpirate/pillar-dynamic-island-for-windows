@@ -26,32 +26,40 @@ export function useAudioDevices(pollInterval = 5000): UseAudioDevicesReturn {
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [defaultDevice, setDefaultDevice] = useState<AudioDevice | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch devices list
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPendingRef = useRef(false);
+
+  // Fetch devices list (with in-flight guard)
   const fetchDevices = useCallback(async () => {
-    const result = await tauriInvoke<Array<{
-      id: string;
-      name: string;
-      is_default: boolean;
-    }>>("list_audio_devices");
-    
-    if (result) {
-      const mapped = result.map(d => ({
-        id: d.id,
-        name: d.name,
-        isDefault: d.is_default,
-      }));
-      setDevices(mapped);
-      
-      // Update default device
-      const def = mapped.find(d => d.isDefault);
-      if (def) {
-        setDefaultDevice(def);
+    if (isPendingRef.current) return;
+    isPendingRef.current = true;
+    try {
+      const result = await tauriInvoke<Array<{
+        id: string;
+        name: string;
+        is_default: boolean;
+      }>>("list_audio_devices");
+
+      if (result) {
+        const mapped = result.map(d => ({
+          id: d.id,
+          name: d.name,
+          isDefault: d.is_default,
+        }));
+        setDevices(mapped);
+
+        const def = mapped.find(d => d.isDefault);
+        if (def) {
+          setDefaultDevice(def);
+        }
       }
+    } catch {
+      // Silently handle errors
+    } finally {
+      isPendingRef.current = false;
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
   const refresh = useCallback(async () => {

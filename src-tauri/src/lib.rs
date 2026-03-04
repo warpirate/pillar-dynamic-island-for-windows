@@ -6,8 +6,12 @@ use tauri::tray::TrayIconBuilder;
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+/// Cached notification access status so we don't re-poll it on every get_notifications() call.
+static NOTIFICATION_ACCESS_GRANTED: AtomicBool = AtomicBool::new(false);
 
 // Windows-only imports (Android builds must not compile Win32 code)
 #[cfg(target_os = "windows")]
@@ -444,13 +448,17 @@ async fn prism_chat(request: PrismChatRequest) -> Result<PrismChatResponse, Stri
 // Async Helpers - Poll Windows IAsyncOperation until complete
 // =============================================================================
 
+/// Max iterations for polling Windows async operations.
+/// 30 iterations * 5ms = 150ms max block per operation (down from 100 * 10ms = 1s).
+const POLL_MAX_ITERS: usize = 30;
+const POLL_SLEEP_MS: u64 = 5;
+
 #[cfg(target_os = "windows")]
 fn poll_session_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager, String> {
     let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
         .map_err(|e| format!("Failed to request session manager: {}", e))?;
-    
-    // Poll until complete or timeout
-    for _ in 0..100 {
+
+    for _ in 0..POLL_MAX_ITERS {
         let status = op.Status().map_err(|e| format!("Failed to get status: {}", e))?;
         if status == AsyncStatus::Completed {
             return op.GetResults().map_err(|e| format!("Failed to get results: {}", e));
@@ -458,19 +466,19 @@ fn poll_session_manager() -> Result<GlobalSystemMediaTransportControlsSessionMan
         if status == AsyncStatus::Error {
             return Err("Async operation failed".to_string());
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(POLL_SLEEP_MS));
     }
     Err("Timeout waiting for session manager".to_string())
 }
 
 #[cfg(target_os = "windows")]
-fn poll_media_properties(session: &GlobalSystemMediaTransportControlsSession) 
-    -> Result<GlobalSystemMediaTransportControlsSessionMediaProperties, String> 
+fn poll_media_properties(session: &GlobalSystemMediaTransportControlsSession)
+    -> Result<GlobalSystemMediaTransportControlsSessionMediaProperties, String>
 {
     let op = session.TryGetMediaPropertiesAsync()
         .map_err(|e| format!("Failed to request media properties: {}", e))?;
-    
-    for _ in 0..100 {
+
+    for _ in 0..POLL_MAX_ITERS {
         let status = op.Status().map_err(|e| format!("Failed to get status: {}", e))?;
         if status == AsyncStatus::Completed {
             return op.GetResults().map_err(|e| format!("Failed to get results: {}", e));
@@ -478,14 +486,14 @@ fn poll_media_properties(session: &GlobalSystemMediaTransportControlsSession)
         if status == AsyncStatus::Error {
             return Err("Async operation failed".to_string());
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(POLL_SLEEP_MS));
     }
     Err("Timeout waiting for media properties".to_string())
 }
 
 #[cfg(target_os = "windows")]
 fn poll_bool_op(op: windows::Foundation::IAsyncOperation<bool>) -> Result<bool, String> {
-    for _ in 0..100 {
+    for _ in 0..POLL_MAX_ITERS {
         let status = op.Status().map_err(|e| format!("Failed to get status: {}", e))?;
         if status == AsyncStatus::Completed {
             return op.GetResults().map_err(|e| format!("Failed to get results: {}", e));
@@ -493,7 +501,7 @@ fn poll_bool_op(op: windows::Foundation::IAsyncOperation<bool>) -> Result<bool, 
         if status == AsyncStatus::Error {
             return Err("Async operation failed".to_string());
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(POLL_SLEEP_MS));
     }
     Err("Timeout waiting for operation".to_string())
 }
@@ -1482,25 +1490,30 @@ fn set_system_brightness(_payload: SetBrightnessPayload) -> Result<(), String> {
 // Notification Commands
 // =============================================================================
 
-/// Helper to poll notification listener access
+/// Helper to poll notification listener access.
+/// Updates the global cache on success.
 #[cfg(target_os = "windows")]
 fn poll_notification_access() -> Result<UserNotificationListenerAccessStatus, String> {
     let listener = UserNotificationListener::Current()
         .map_err(|e| format!("Failed to get notification listener: {}", e))?;
-    
+
     let op = listener.RequestAccessAsync()
         .map_err(|e| format!("Failed to request notification access: {}", e))?;
-    
-    // Poll until complete
-    for _ in 0..100 {
+
+    for _ in 0..POLL_MAX_ITERS {
         let status = op.Status().map_err(|e| format!("Failed to get status: {}", e))?;
         if status == AsyncStatus::Completed {
-            return op.GetResults().map_err(|e| format!("Failed to get results: {}", e));
+            let result = op.GetResults().map_err(|e| format!("Failed to get results: {}", e))?;
+            NOTIFICATION_ACCESS_GRANTED.store(
+                result == UserNotificationListenerAccessStatus::Allowed,
+                Ordering::Relaxed,
+            );
+            return Ok(result);
         }
         if status == AsyncStatus::Error {
             return Err("Async operation failed".to_string());
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(POLL_SLEEP_MS));
     }
     Err("Timeout waiting for notification access".to_string())
 }
@@ -1515,14 +1528,13 @@ fn poll_notification_access() -> Result<(), String> {
 fn poll_notifications_list(listener: &UserNotificationListener) -> Result<Vec<UserNotification>, String> {
     let op = listener.GetNotificationsAsync(windows::UI::Notifications::NotificationKinds::Toast)
         .map_err(|e| format!("Failed to get notifications: {}", e))?;
-    
-    for _ in 0..100 {
+
+    for _ in 0..POLL_MAX_ITERS {
         let status = op.Status().map_err(|e| format!("Failed to get status: {}", e))?;
         if status == AsyncStatus::Completed {
             let notifs = op.GetResults()
                 .map_err(|e| format!("Failed to get results: {}", e))?;
-            
-            // Convert IVectorView to Vec
+
             let mut result = Vec::new();
             let count = notifs.Size().unwrap_or(0);
             for i in 0..count {
@@ -1535,7 +1547,7 @@ fn poll_notifications_list(listener: &UserNotificationListener) -> Result<Vec<Us
         if status == AsyncStatus::Error {
             return Err("Async operation failed".to_string());
         }
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(POLL_SLEEP_MS));
     }
     Err("Timeout waiting for notifications".to_string())
 }
@@ -1605,12 +1617,15 @@ fn subscribe_notification_changed(
     false
 }
 
-/// Request notification access and check if granted
+/// Request notification access and check if granted.
+/// Also updates the cached access flag used by get_notifications().
 #[cfg(target_os = "windows")]
 #[tauri::command]
 fn check_notification_access() -> Result<bool, String> {
     let status = poll_notification_access()?;
-    Ok(status == UserNotificationListenerAccessStatus::Allowed)
+    let allowed = status == UserNotificationListenerAccessStatus::Allowed;
+    NOTIFICATION_ACCESS_GRANTED.store(allowed, Ordering::Relaxed);
+    Ok(allowed)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1619,18 +1634,18 @@ fn check_notification_access() -> Result<bool, String> {
     Ok(false)
 }
 
-/// Get recent notifications
+/// Get recent notifications.
+/// Uses cached access status to avoid re-polling access on every call.
 #[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_notifications() -> Result<Vec<SystemNotification>, String> {
+    // Use cached access status instead of re-polling (saves ~150ms of blocking per call)
+    if !NOTIFICATION_ACCESS_GRANTED.load(Ordering::Relaxed) {
+        return Ok(Vec::new());
+    }
+
     let listener = UserNotificationListener::Current()
         .map_err(|e| format!("Failed to get notification listener: {}", e))?;
-    
-    // Check access first
-    let access = poll_notification_access()?;
-    if access != UserNotificationListenerAccessStatus::Allowed {
-        return Ok(Vec::new()); // No access, return empty list
-    }
     
     let notifications = poll_notifications_list(&listener)?;
     
@@ -1968,6 +1983,7 @@ pub fn run() {
                     Ok(listener) => {
                         match poll_notification_access() {
                             Ok(UserNotificationListenerAccessStatus::Allowed) => {
+                                NOTIFICATION_ACCESS_GRANTED.store(true, Ordering::Relaxed);
                                 let app_handle = app.handle().clone();
                                 let _ = subscribe_notification_changed(&listener, &app_handle);
                             }

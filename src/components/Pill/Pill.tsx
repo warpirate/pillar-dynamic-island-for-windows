@@ -99,7 +99,7 @@ export function Pill() {
     playPause,
     next: mediaNext,
     previous: mediaPrevious,
-  } = useMediaSession(600); // Poll every 600ms for snappy media detection
+  } = useMediaSession(1500); // Poll every 1.5s (reduced from 600ms to avoid saturating backend)
 
   // Volume hook
   const {
@@ -124,14 +124,14 @@ export function Pill() {
   const {
     devices: audioDevices,
     defaultDevice: defaultAudioDevice,
-  } = useAudioDevices(5000); // Poll every 5 seconds
+  } = useAudioDevices(15000); // Poll every 15s (devices rarely change; reduced from 5s)
 
   // Per-app mixer hook
   const {
     sessions: audioSessions,
     setSessionVolume,
     setSessionMute,
-  } = usePerAppMixer(3000); // Poll every 3 seconds
+  } = usePerAppMixer(8000); // Poll every 8s (heavy COM operation; reduced from 3s)
 
   // Notifications hook
   const {

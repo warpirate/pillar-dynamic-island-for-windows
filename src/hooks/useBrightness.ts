@@ -31,25 +31,34 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
     isSupported: false,
   });
   const [isLoading, setIsLoading] = useState(false);
-  
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch brightness info
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPendingRef = useRef(false);
+
+  // Fetch brightness info (with in-flight guard)
   const fetchBrightness = useCallback(async () => {
-    const result = await tauriInvoke<{
-      level: number;
-      min: number;
-      max: number;
-      is_supported: boolean;
-    }>("get_system_brightness");
-    
-    if (result) {
-      setBrightnessState({
-        level: result.level,
-        min: result.min,
-        max: result.max,
-        isSupported: result.is_supported,
-      });
+    if (isPendingRef.current) return;
+    isPendingRef.current = true;
+    try {
+      const result = await tauriInvoke<{
+        level: number;
+        min: number;
+        max: number;
+        is_supported: boolean;
+      }>("get_system_brightness");
+
+      if (result) {
+        setBrightnessState({
+          level: result.level,
+          min: result.min,
+          max: result.max,
+          isSupported: result.is_supported,
+        });
+      }
+    } catch {
+      // Silently handle errors to prevent crashes
+    } finally {
+      isPendingRef.current = false;
     }
   }, []);
 

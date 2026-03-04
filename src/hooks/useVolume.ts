@@ -25,17 +25,26 @@ interface UseVolumeReturn {
 export function useVolume(pollInterval = 5000): UseVolumeReturn {
   const [volume, setVolumeState] = useState<VolumeInfo>({ level: 50, isMuted: false });
   const [isLoading, setIsLoading] = useState(false);
-  
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch volume info
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPendingRef = useRef(false);
+
+  // Fetch volume info (with in-flight guard)
   const fetchVolume = useCallback(async () => {
-    const result = await tauriInvoke<{ level: number; is_muted: boolean }>("get_system_volume");
-    if (result) {
-      setVolumeState({
-        level: result.level,
-        isMuted: result.is_muted,
-      });
+    if (isPendingRef.current) return;
+    isPendingRef.current = true;
+    try {
+      const result = await tauriInvoke<{ level: number; is_muted: boolean }>("get_system_volume");
+      if (result) {
+        setVolumeState({
+          level: result.level,
+          isMuted: result.is_muted,
+        });
+      }
+    } catch {
+      // Silently handle errors to prevent crashes
+    } finally {
+      isPendingRef.current = false;
     }
   }, []);
 

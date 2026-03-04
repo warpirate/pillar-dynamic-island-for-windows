@@ -32,14 +32,16 @@ function App() {
     };
   }, []);
 
-  // Fullscreen detection: poll frequently so pill hides/shows with no noticeable delay
+  // Fullscreen detection: poll so pill hides/shows when entering/leaving fullscreen
   useEffect(() => {
     if (!isTauriAvailable()) return;
 
     let isMounted = true;
+    let isPending = false;
     const checkFullscreen = async () => {
-      if (!isMounted) return;
-      
+      if (!isMounted || isPending) return; // Skip if previous check still in-flight
+      isPending = true;
+
       try {
         const fullscreen = await tauriInvoke<boolean>("is_foreground_fullscreen");
         if (isMounted && fullscreen !== null && fullscreen !== lastFullscreenState.current) {
@@ -47,17 +49,18 @@ function App() {
           setIsFullscreen(fullscreen);
         }
       } catch (error) {
-        // Silently handle Tauri invoke errors to prevent crashes
         if (isMounted) {
           console.warn('Fullscreen check failed:', error);
         }
+      } finally {
+        isPending = false;
       }
     };
 
     // Initial check
     checkFullscreen();
 
-    const POLL_MS = 300; // Fast response when entering/leaving fullscreen
+    const POLL_MS = 1000; // 1s is responsive enough; avoids flooding the backend thread pool
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     const startPolling = () => {

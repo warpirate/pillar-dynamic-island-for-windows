@@ -45,6 +45,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
   const [isNewNotification, setIsNewNotification] = useState(false);
   
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPendingRef = useRef(false);
   const lastSeenIdRef = useRef<number>(0);
   const latestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phaseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,10 +62,11 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     return result ?? false;
   }, []);
 
-  // Fetch notifications
+  // Fetch notifications (with in-flight guard)
   const fetchNotifications = useCallback(async () => {
+    if (isPendingRef.current) return; // Skip if previous request still in-flight
+
     if (!hasAccess) {
-      // Try to check access first
       const access = await checkAccess();
       if (!access) {
         setIsLoading(false);
@@ -72,67 +74,74 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       }
     }
 
-    const result = await tauriInvoke<Array<{
-      id: number;
-      app_name: string;
-      title: string;
-      body: string;
-      timestamp: number;
-    }>>("get_notifications");
-    
-    if (result) {
-      const mapped = result.map(n => ({
-        id: n.id,
-        appName: n.app_name,
-        title: n.title,
-        body: n.body,
-        timestamp: n.timestamp,
-      }));
-      
-      // Check for new notifications
-      if (mapped.length > 0) {
-        const newest = mapped[0];
-        // Show toast for any new notification (including the first one)
-        if (newest.id !== lastSeenIdRef.current) {
-          // New notification arrived - start animation sequence
-          setLatestNotification(newest);
-          setIsNewNotification(true);
-          
-          // Clear any existing timeouts
-          if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
-          if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
-          if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
-          
-          // Phase 1: Incoming - toast appears below pill (2 seconds)
-          setNotificationPhase("incoming");
-          
-          // Phase 2: Absorbing - toast shrinks and moves into pill (300ms)
-          phaseTimeoutRef.current = setTimeout(() => {
-            setNotificationPhase("absorbing");
-            
-            // Phase 3: Showing - badge visible in pill
+    isPendingRef.current = true;
+    try {
+      const result = await tauriInvoke<Array<{
+        id: number;
+        app_name: string;
+        title: string;
+        body: string;
+        timestamp: number;
+      }>>("get_notifications");
+
+      if (result) {
+        const mapped = result.map(n => ({
+          id: n.id,
+          appName: n.app_name,
+          title: n.title,
+          body: n.body,
+          timestamp: n.timestamp,
+        }));
+
+        // Check for new notifications
+        if (mapped.length > 0) {
+          const newest = mapped[0];
+          // Show toast for any new notification (including the first one)
+          if (newest.id !== lastSeenIdRef.current) {
+            // New notification arrived - start animation sequence
+            setLatestNotification(newest);
+            setIsNewNotification(true);
+
+            // Clear any existing timeouts
+            if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
+            if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
+            if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
+
+            // Phase 1: Incoming - toast appears below pill (2 seconds)
+            setNotificationPhase("incoming");
+
+            // Phase 2: Absorbing - toast shrinks and moves into pill (300ms)
             phaseTimeoutRef.current = setTimeout(() => {
-              setNotificationPhase("showing");
-              setLatestNotification(null);  // Clear toast, badge stays
-            }, 300);
-          }, 2000);
-          
-          // Clear "new notification" pulse after animation completes
-          newNotificationTimeoutRef.current = setTimeout(() => {
-            setIsNewNotification(false);
-          }, 2500);
+              setNotificationPhase("absorbing");
+
+              // Phase 3: Showing - badge visible in pill
+              phaseTimeoutRef.current = setTimeout(() => {
+                setNotificationPhase("showing");
+                setLatestNotification(null);  // Clear toast, badge stays
+              }, 300);
+            }, 2000);
+
+            // Clear "new notification" pulse after animation completes
+            newNotificationTimeoutRef.current = setTimeout(() => {
+              setIsNewNotification(false);
+            }, 2500);
+          }
+          lastSeenIdRef.current = newest.id;
         }
-        lastSeenIdRef.current = newest.id;
+
+        // Update phase based on notification count
+        if (mapped.length === 0 && notificationPhaseRef.current === "showing") {
+          setNotificationPhase("idle");
+        }
+
+        setNotifications(mapped);
       }
-      
-      // Update phase based on notification count (use ref so we don't need notificationPhase in deps — that would recreate this callback when phase changes and kill the phase timeouts)
-      if (mapped.length === 0 && notificationPhaseRef.current === "showing") {
-        setNotificationPhase("idle");
-      }
-      
-      setNotifications(mapped);
+    } catch {
+      // Silently handle errors to prevent crashes
+    } finally {
+      isPendingRef.current = false;
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, [hasAccess, checkAccess]);
 
   const refresh = useCallback(async () => {

@@ -29,31 +29,40 @@ interface UsePerAppMixerReturn {
 export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
   const [sessions, setSessions] = useState<AudioSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch sessions list
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPendingRef = useRef(false);
+
+  // Fetch sessions list (with in-flight guard)
   const fetchSessions = useCallback(async () => {
-    const result = await tauriInvoke<Array<{
-      session_id: string;
-      app_name: string;
-      process_id: number;
-      volume: number;
-      is_muted: boolean;
-      is_active: boolean;
-    }>>("list_audio_sessions");
-    
-    if (result) {
-      setSessions(result.map(s => ({
-        sessionId: s.session_id,
-        appName: s.app_name,
-        processId: s.process_id,
-        volume: s.volume,
-        isMuted: s.is_muted,
-        isActive: s.is_active,
-      })));
+    if (isPendingRef.current) return;
+    isPendingRef.current = true;
+    try {
+      const result = await tauriInvoke<Array<{
+        session_id: string;
+        app_name: string;
+        process_id: number;
+        volume: number;
+        is_muted: boolean;
+        is_active: boolean;
+      }>>("list_audio_sessions");
+
+      if (result) {
+        setSessions(result.map(s => ({
+          sessionId: s.session_id,
+          appName: s.app_name,
+          processId: s.process_id,
+          volume: s.volume,
+          isMuted: s.is_muted,
+          isActive: s.is_active,
+        })));
+      }
+    } catch {
+      // Silently handle errors
+    } finally {
+      isPendingRef.current = false;
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
   const refresh = useCallback(async () => {

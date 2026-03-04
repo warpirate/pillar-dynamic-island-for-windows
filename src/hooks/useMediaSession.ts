@@ -42,13 +42,16 @@ export function useMediaSession(
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isPendingRef = useRef(false);
   const onMediaChangeRef = useRef(onMediaChange);
   onMediaChangeRef.current = onMediaChange;
 
-  // Fetch media session info
+  // Fetch media session info (with in-flight guard to prevent overlapping requests)
   const fetchMedia = useCallback(async () => {
+    if (isPendingRef.current) return; // Skip if previous request still in-flight
+    isPendingRef.current = true;
     try {
       const result = await tauriInvoke<RawMediaInfo | null>("get_media_session");
 
@@ -65,12 +68,14 @@ export function useMediaSession(
 
       setMedia(transformed);
       setError(null);
-      
+
       if (onMediaChangeRef.current) {
         onMediaChangeRef.current(transformed);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to get media session");
+    } finally {
+      isPendingRef.current = false;
     }
   }, []);
 
