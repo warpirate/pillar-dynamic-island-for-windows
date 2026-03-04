@@ -1,3 +1,4 @@
+import type { BatteryInfo } from "../hooks/useBattery";
 import type { BrightnessInfo } from "../hooks/useBrightness";
 import type { MediaInfo } from "../hooks/useMediaSession";
 import type { SystemNotification } from "../hooks/useNotifications";
@@ -19,6 +20,7 @@ export interface PrismContextSource {
   notifications: SystemNotification[];
   audioSessions: AudioSession[];
   autoStartEnabled: boolean;
+  battery: BatteryInfo;
 }
 
 function truncate(value: string, maxChars: number): string {
@@ -36,6 +38,7 @@ function detectIntent(userMessage: string): {
   wantsMedia: boolean;
   wantsNotifications: boolean;
   wantsSettings: boolean;
+  wantsBattery: boolean;
 } {
   const lower = userMessage.toLowerCase();
   const wantsOverview =
@@ -44,6 +47,7 @@ function detectIntent(userMessage: string): {
   const wantsMedia = /(media|music|song|track|spotify|youtube|playback|play|pause|next|previous)/.test(lower);
   const wantsNotifications = /(notification|notifs|alert|message|inbox|whatsapp|mail)/.test(lower);
   const wantsSettings = /(volume|mute|brightness|audio|mixer|autostart|settings)/.test(lower);
+  const wantsBattery = /(battery|charge|charging|power|energy|percent|low battery)/.test(lower);
 
   return {
     wantsOverview,
@@ -51,6 +55,7 @@ function detectIntent(userMessage: string): {
     wantsMedia,
     wantsNotifications,
     wantsSettings,
+    wantsBattery,
   };
 }
 
@@ -149,6 +154,18 @@ function buildSettingsBlock(
   };
 }
 
+function buildBatteryBlock(battery: BatteryInfo): PrismContextBlock {
+  return {
+    kind: "battery",
+    content: stableJson({
+      percent: battery.percent,
+      isCharging: battery.isCharging,
+      isBatterySaver: battery.isBatterySaver,
+      hasBattery: battery.hasBattery,
+    }),
+  };
+}
+
 export function buildPrismContext(
   userMessage: string,
   source: PrismContextSource
@@ -183,6 +200,10 @@ export function buildPrismContext(
     );
   }
 
+  if (includeAll || intent.wantsBattery) {
+    pushBlock(blocks, buildBatteryBlock(source.battery), usedChars);
+  }
+
   if (blocks.length === 0) {
     pushBlock(
       blocks,
@@ -194,6 +215,8 @@ export function buildPrismContext(
           notificationCount: source.notifications.length,
           volume: source.volume.level,
           muted: source.volume.isMuted,
+          batteryPercent: source.battery.hasBattery ? source.battery.percent : null,
+          batteryCharging: source.battery.isCharging,
         }),
       },
       usedChars

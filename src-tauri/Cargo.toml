@@ -47,6 +47,8 @@ features = [
   "Win32_Devices_FunctionDiscovery",
   # Brightness control (DDC/CI for monitors)
   "Win32_Devices_Display",
+  # Battery / Power (Win32 - simple, no WinRT apartment needed)
+  "Win32_System_Power",
   # Async support
   "Foundation",
   "Foundation_Collections",

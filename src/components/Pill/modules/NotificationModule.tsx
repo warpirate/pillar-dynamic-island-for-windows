@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import type { SystemNotification } from "../../../hooks/useNotifications";
 import { notificationAnimations, microInteractions, PILL_DURATION_FAST } from "../animations";
@@ -100,22 +99,8 @@ interface NotificationToastProps {
 export function NotificationToast({ notification, onDismiss, onActivate, phase = "incoming" }: NotificationToastProps) {
   const shouldShow = notification && (phase === "incoming" || phase === "absorbing");
 
-  useEffect(() => {
-    if (!notification || !shouldShow) return;
-    
-    // Only set timeout during "incoming" phase - "absorbing" phase is already transitioning out
-    // Set timeout to 1800ms to allow manual dismissal before automatic phase transition at 2000ms
-    let phaseTimeout: ReturnType<typeof setTimeout> | null = null;
-    if (phase === "incoming") {
-      phaseTimeout = setTimeout(() => {
-        onDismiss();
-      }, 1800);
-    }
-    
-    return () => {
-      if (phaseTimeout) clearTimeout(phaseTimeout);
-    };
-  }, [notification, shouldShow, phase, onDismiss]);
+  // No auto-dismiss here — the useNotifications hook controls the full lifecycle
+  // (incoming → absorbing → showing) so the absorbing animation actually plays.
 
   return (
     <AnimatePresence mode="popLayout">
@@ -250,7 +235,7 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
 
   return (
     <motion.div
-      className="bg-white/5 rounded-md p-2 hover:bg-white/8 transition-colors group cursor-pointer"
+      className="bg-white/5 rounded-md p-2 hover:bg-white/[0.08] transition-colors group cursor-pointer"
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
@@ -364,7 +349,7 @@ export function NotificationsList({ notifications, hasAccess, onDismiss, onActiv
   }
 
   return (
-    <div className="flex flex-col gap-1.5 max-h-36 overflow-y-auto pr-0.5">
+    <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-0.5">
       <AnimatePresence>
         {notifications.map((notification) => (
           <NotificationCard

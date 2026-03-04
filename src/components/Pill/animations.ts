@@ -97,14 +97,32 @@ export const pillDimensions = {
     height: 36,
     borderRadius: 18,
   },
+  // Wider idle state when battery icon is shown (icon only, no %)
+  idleWithBattery: {
+    width: 148,
+    height: 36,
+    borderRadius: 18,
+  },
   // Wider idle state when notifications are present
   idleWithNotifications: {
     width: 170,
     height: 36,
     borderRadius: 18,
   },
+  // Battery icon + notifications both present
+  idleWithBatteryAndNotifications: {
+    width: 196,
+    height: 36,
+    borderRadius: 18,
+  },
   hover: {
     width: 160,
+    height: 40,
+    borderRadius: 20,
+  },
+  // Hover with battery (icon + % text visible on hover)
+  hoverWithBattery: {
+    width: 200,
     height: 40,
     borderRadius: 20,
   },
@@ -114,9 +132,15 @@ export const pillDimensions = {
     height: 40,
     borderRadius: 20,
   },
+  // Battery + notifications both present on hover
+  hoverWithBatteryAndNotifications: {
+    width: 240,
+    height: 40,
+    borderRadius: 20,
+  },
   expanded: {
     width: 380,
-    height: 280,
+    height: 340,
     borderRadius: 28,
   },
 } as const;
@@ -186,17 +210,30 @@ export type PillVisualState = "idle" | "hover" | "expanded";
 
 export function getPillTargetStyle(
   state: PillVisualState,
-  hasNotificationBadge: boolean
+  hasNotificationBadge: boolean,
+  hasBattery: boolean = false
 ): { width: number; height: number; borderRadius: number; blur: number; shadow: number } {
   if (state === "expanded") {
     const d = pillDimensions.expanded;
     return { ...d, blur: 20, shadow: 0.35 };
   }
   if (state === "hover") {
-    const d = hasNotificationBadge ? pillDimensions.hoverWithNotifications : pillDimensions.hover;
+    const d = hasBattery && hasNotificationBadge
+      ? pillDimensions.hoverWithBatteryAndNotifications
+      : hasBattery
+        ? pillDimensions.hoverWithBattery
+        : hasNotificationBadge
+          ? pillDimensions.hoverWithNotifications
+          : pillDimensions.hover;
     return { ...d, blur: 14, shadow: 0.25 };
   }
-  const d = hasNotificationBadge ? pillDimensions.idleWithNotifications : pillDimensions.idle;
+  const d = hasBattery && hasNotificationBadge
+    ? pillDimensions.idleWithBatteryAndNotifications
+    : hasBattery
+      ? pillDimensions.idleWithBattery
+      : hasNotificationBadge
+        ? pillDimensions.idleWithNotifications
+        : pillDimensions.idle;
   return { ...d, blur: 10, shadow: 0.2 };
 }
 

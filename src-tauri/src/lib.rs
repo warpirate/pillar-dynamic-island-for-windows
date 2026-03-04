@@ -131,6 +131,18 @@ pub struct SystemNotification {
 }
 
 // =============================================================================
+// Battery Types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatteryInfo {
+    pub percent: u32,           // 0-100
+    pub is_charging: bool,
+    pub is_battery_saver: bool,
+    pub has_battery: bool,      // false on desktops without a battery
+}
+
+// =============================================================================
 // Prism AI Types
 // =============================================================================
 
@@ -1887,6 +1899,66 @@ fn set_autostart_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
     }
 }
 
+// =============================================================================
+// Battery Commands
+// =============================================================================
+
+/// Get battery status using Win32 GetSystemPowerStatus (no WinRT, no apartment init needed)
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn get_battery_info() -> Result<BatteryInfo, String> {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+
+    unsafe {
+        let mut sps = SYSTEM_POWER_STATUS::default();
+        GetSystemPowerStatus(&mut sps)
+            .map_err(|e| format!("Failed to get power status: {}", e))?;
+
+        // BatteryFlag bit 128 = no system battery present
+        let has_battery = (sps.BatteryFlag & 128) == 0;
+
+        if !has_battery {
+            return Ok(BatteryInfo {
+                percent: 0,
+                is_charging: false,
+                is_battery_saver: false,
+                has_battery: false,
+            });
+        }
+
+        // BatteryLifePercent: 0–100, or 255 when unknown
+        let percent = if sps.BatteryLifePercent == 255 {
+            0
+        } else {
+            sps.BatteryLifePercent as u32
+        };
+
+        // ACLineStatus 1 = AC power connected (plugged in)
+        let is_charging = sps.ACLineStatus == 1;
+
+        // SystemStatusFlag bit 1 = battery saver on
+        let is_battery_saver = (sps.SystemStatusFlag & 1) != 0;
+
+        Ok(BatteryInfo {
+            percent,
+            is_charging,
+            is_battery_saver,
+            has_battery: true,
+        })
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_battery_info() -> Result<BatteryInfo, String> {
+    Ok(BatteryInfo {
+        percent: 0,
+        is_charging: false,
+        is_battery_saver: false,
+        has_battery: false,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -1934,6 +2006,8 @@ pub fn run() {
             // Auto-start
             check_autostart_enabled,
             set_autostart_enabled,
+            // Battery
+            get_battery_info,
             // Prism AI
             prism_chat
         ])

@@ -9,8 +9,10 @@ import { useBrightness } from "../../hooks/useBrightness";
 import { useAudioDevices } from "../../hooks/useAudioDevices";
 import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
+import { useBattery } from "../../hooks/useBattery";
 import { usePrismAI } from "../../hooks/usePrismAI";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
+import { BatteryIndicator } from "./modules/BatteryModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
 import { TimerExpanded } from "./modules/TimerModule";
 import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
@@ -144,6 +146,13 @@ export function Pill() {
     clearLatest: clearLatestNotification,
   } = useNotifications(); // Real-time via Windows NotificationChanged event; fallback poll every 30s
 
+  // Battery hook
+  const {
+    battery,
+    isLow: isBatteryLow,
+    isCritical: isBatteryCritical,
+  } = useBattery(60000); // Poll every 60s (battery changes slowly)
+
   const {
     messages: prismMessages,
     actions: prismActions,
@@ -163,10 +172,11 @@ export function Pill() {
     notifications,
     audioSessions,
     autoStartEnabled,
+    battery,
   });
 
   // Whether to show notification badge in the pill
-  const hasNotificationBadge = notifications.length > 0 && 
+  const hasNotificationBadge = notifications.length > 0 &&
     (notificationPhase === "showing" || notificationPhase === "idle");
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -218,6 +228,10 @@ export function Pill() {
   const hasMediaPlaying = media?.isPlaying ?? false;
   const showTimerInIdle = hasTimerActive && !isExpanded;
   const showMediaInIdle = hasMediaPlaying && !hasTimerActive && !isExpanded;
+
+  // Whether to show battery indicator in the idle pill
+  // Hide when timer is active or media is playing to avoid congestion
+  const showBatteryInIdle = battery.hasBattery && !hasTimerActive && !hasMediaPlaying;
 
   // Snappy spring so hover-in and unhover-out feel the same
   const pillSpring = springConfig.snappy;
@@ -274,13 +288,13 @@ export function Pill() {
   // Update dimensions from current visual state (keeps animations smooth, logic simple)
   useEffect(() => {
     if (isBooting) return;
-    const target = getPillTargetStyle(visualState, hasNotificationBadge);
+    const target = getPillTargetStyle(visualState, hasNotificationBadge, showBatteryInIdle);
     width.set(target.width);
     height.set(target.height);
     borderRadius.set(target.borderRadius);
     blurAmount.set(target.blur);
     shadowOpacity.set(target.shadow);
-  }, [isBooting, visualState, hasNotificationBadge, width, height, borderRadius, blurAmount, shadowOpacity]);
+  }, [isBooting, visualState, hasNotificationBadge, showBatteryInIdle, width, height, borderRadius, blurAmount, shadowOpacity]);
 
   // Keep window always receiving clicks so the pill is clickable.
   // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
@@ -676,8 +690,29 @@ export function Pill() {
             </AnimatePresence>
           </motion.div>
 
-          {/* Right side: Notification badge — direct AnimatePresence child, no layoutId, overflow-visible so exit is visible */}
-          <div className="flex items-center justify-end flex-shrink-0 min-w-0 overflow-visible">
+          {/* Right side: Battery + Notification badge — fixed animated width so center clock stays centered */}
+          <motion.div
+            className="flex items-center justify-end flex-shrink-0 overflow-hidden gap-1"
+            animate={{
+              width:
+                showBatteryInIdle && hasNotificationBadge ? (isHovering ? 74 : 48) :
+                showBatteryInIdle ? (isHovering ? 48 : 22) :
+                hasNotificationBadge ? 28 :
+                0,
+            }}
+            transition={idleSlotAnimations.transition}
+          >
+            <AnimatePresence mode="wait">
+              {showBatteryInIdle && (
+                <BatteryIndicator
+                  key="battery"
+                  battery={battery}
+                  isLow={isBatteryLow}
+                  isCritical={isBatteryCritical}
+                  showPercent={isHovering}
+                />
+              )}
+            </AnimatePresence>
             <AnimatePresence mode="wait">
               {hasNotificationBadge && notifications.length > 0 && (
                 <NotificationIndicator
@@ -689,7 +724,7 @@ export function Pill() {
                 />
               )}
             </AnimatePresence>
-          </div>
+          </motion.div>
         </div>
       )}
 

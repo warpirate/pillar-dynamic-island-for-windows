@@ -107,24 +107,24 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
             if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
             if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
 
-            // Phase 1: Incoming - toast appears below pill (2 seconds)
+            // Phase 1: Incoming - toast appears below pill (3.5 seconds for readability)
             setNotificationPhase("incoming");
 
-            // Phase 2: Absorbing - toast shrinks and moves into pill (300ms)
+            // Phase 2: Absorbing - toast shrinks and moves into pill badge (400ms)
             phaseTimeoutRef.current = setTimeout(() => {
               setNotificationPhase("absorbing");
 
-              // Phase 3: Showing - badge visible in pill
+              // Phase 3: Showing - badge visible in pill, toast fully gone
               phaseTimeoutRef.current = setTimeout(() => {
                 setNotificationPhase("showing");
                 setLatestNotification(null);  // Clear toast, badge stays
-              }, 300);
-            }, 2000);
+              }, 400);
+            }, 3500);
 
-            // Clear "new notification" pulse after animation completes
+            // Clear "new notification" pulse after full animation completes
             newNotificationTimeoutRef.current = setTimeout(() => {
               setIsNewNotification(false);
-            }, 2500);
+            }, 4200);
           }
           lastSeenIdRef.current = newest.id;
         }

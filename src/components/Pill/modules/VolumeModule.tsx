@@ -21,6 +21,13 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
   const [isDragging, setIsDragging] = useState(false);
   const [localLevel, setLocalLevel] = useState(volume.level);
 
+  // Sync local level when volume prop changes (from polling) and not dragging
+  useEffect(() => {
+    if (!isDragging) {
+      setLocalLevel(volume.level);
+    }
+  }, [volume.level, isDragging]);
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newLevel = parseInt(e.target.value, 10);
     setLocalLevel(newLevel);
@@ -37,7 +44,6 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
     setIsDragging(true);
   }, []);
 
-  // Update local level when volume prop changes (from polling)
   const displayLevel = isDragging ? localLevel : volume.level;
 
   return (
