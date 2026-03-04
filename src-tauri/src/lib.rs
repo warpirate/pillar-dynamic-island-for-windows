@@ -1933,8 +1933,11 @@ fn get_battery_info() -> Result<BatteryInfo, String> {
             sps.BatteryLifePercent as u32
         };
 
-        // ACLineStatus 1 = AC power connected (plugged in)
-        let is_charging = sps.ACLineStatus == 1;
+        // BATTERY_FLAG_CHARGING (0x08) = battery is actively receiving charge.
+        // Do NOT use ACLineStatus == 1 ("cord connected") — laptops with battery
+        // conservation modes (e.g. ASUS capped at 80%) are plugged in but NOT charging,
+        // so ACLineStatus=1 even though no current is flowing into the battery.
+        let is_charging = (sps.BatteryFlag & 0x08) != 0;
 
         // SystemStatusFlag bit 1 = battery saver on
         let is_battery_saver = (sps.SystemStatusFlag & 1) != 0;
