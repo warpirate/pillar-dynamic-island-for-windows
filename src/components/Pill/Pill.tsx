@@ -227,11 +227,10 @@ export function Pill() {
   const hasTimerAlert = timer.isComplete;
   const hasMediaPlaying = media?.isPlaying ?? false;
   const showTimerInIdle = hasTimerActive && !isExpanded;
-  const showMediaInIdle = hasMediaPlaying && !hasTimerActive && !isExpanded;
+  const showMediaInIdle = hasMediaPlaying && !isExpanded;
 
   // Whether to show battery indicator in the idle pill
-  // Hide when timer is active or media is playing to avoid congestion
-  const showBatteryInIdle = battery.hasBattery && !hasTimerActive && !hasMediaPlaying;
+  const showBatteryInIdle = battery.hasBattery;
 
   // Snappy spring so hover-in and unhover-out feel the same
   const pillSpring = springConfig.snappy;
@@ -288,13 +287,17 @@ export function Pill() {
   // Update dimensions from current visual state (keeps animations smooth, logic simple)
   useEffect(() => {
     if (isBooting) return;
-    const target = getPillTargetStyle(visualState, hasNotificationBadge, showBatteryInIdle);
+    const target = getPillTargetStyle(visualState, {
+      hasMedia: showMediaInIdle,
+      hasBattery: showBatteryInIdle,
+      hasNotifications: hasNotificationBadge,
+    });
     width.set(target.width);
     height.set(target.height);
     borderRadius.set(target.borderRadius);
     blurAmount.set(target.blur);
     shadowOpacity.set(target.shadow);
-  }, [isBooting, visualState, hasNotificationBadge, showBatteryInIdle, width, height, borderRadius, blurAmount, shadowOpacity]);
+  }, [isBooting, visualState, showMediaInIdle, showBatteryInIdle, hasNotificationBadge, width, height, borderRadius, blurAmount, shadowOpacity]);
 
   // Keep window always receiving clicks so the pill is clickable.
   // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
@@ -310,14 +313,26 @@ export function Pill() {
 
   // Resize and re-center window when expanded or when notification toast is showing (so toast isn't clipped)
   const showNotificationToast = !isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && !!latestNotification;
+  // Compute actual idle pill width based on active indicators (matches getPillTargetStyle logic)
+  const idlePillWidth = isExpanded
+    ? pillDimensions.expanded.width
+    : getPillTargetStyle("idle", {
+        hasMedia: showMediaInIdle,
+        hasBattery: showBatteryInIdle,
+        hasNotifications: hasNotificationBadge,
+      }).width;
   useEffect(() => {
     const resizeAndCenter = async () => {
-      const dims = isExpanded ? pillDimensions.expanded : pillDimensions.idle;
-      const w = dims.width + 60;
-      // Only add extra height when expanded (for content) or when toast is visible (for toast space)
+      const pillWidth = isExpanded ? pillDimensions.expanded.width : idlePillWidth;
+      const pillHeight = isExpanded ? pillDimensions.expanded.height : pillDimensions.idle.height;
+      // Toast is 300-380px wide, so the window must be wide enough to contain it
+      const w = showNotificationToast
+        ? Math.max(pillWidth + 60, 420)
+        : pillWidth + 60;
+      // Toast needs: 10px gap + ~120px toast height + 20px breathing room = ~150px below pill
       // When collapsed with no toast, use exact pill dimensions to avoid blocking clicks below
-      const extraHeight = isExpanded ? 100 : (showNotificationToast ? 120 : 0);
-      const h = dims.height + extraHeight;
+      const extraHeight = isExpanded ? 100 : (showNotificationToast ? 160 : 0);
+      const h = pillHeight + extraHeight;
       const ok = await tauriInvoke("resize_and_center", { width: w, height: h });
       if (ok === null) {
         console.error("Failed to resize/position window");
@@ -325,7 +340,7 @@ export function Pill() {
     };
 
     resizeAndCenter();
-  }, [isExpanded, showNotificationToast]);
+  }, [isExpanded, showNotificationToast, idlePillWidth]);
 
   // Focus trap for expanded state
   useEffect(() => {
@@ -569,7 +584,8 @@ export function Pill() {
       {/* Notification toast (appears BELOW pill, then animates into badge) — click opens the app */}
       {!isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && latestNotification && (
         <div
-          className="absolute top-full mt-3 left-1/2 -translate-x-1/2 z-[100]"
+          className="absolute left-1/2 -translate-x-1/2 z-[100]"
+          style={{ top: "calc(100% + 10px)" }}
           onClickCapture={(e) => {
             e.stopPropagation();
             const id = latestNotification.id;

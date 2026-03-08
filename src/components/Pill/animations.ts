@@ -155,13 +155,13 @@ export const PILL_HEIGHT_EXPANDED = pillDimensions.expanded.height;
 export const notificationAnimations = {
   // Toast appearing below pill
   toast: {
-    initial: prefersReducedMotion 
-      ? { opacity: 0 } 
-      : { y: 50, opacity: 0, scale: 0.8 },
+    initial: prefersReducedMotion
+      ? { opacity: 0 }
+      : { y: 30, opacity: 0, scale: 0.85 },
     animate: { y: 0, opacity: 1, scale: 1 },
-    exit: prefersReducedMotion 
-      ? { opacity: 0 } 
-      : { y: -30, opacity: 0, scale: 0.5 },
+    exit: prefersReducedMotion
+      ? { opacity: 0 }
+      : { y: -40, opacity: 0, scale: 0.4 },
   },
   // Badge appearing in pill
   badge: {
@@ -210,31 +210,35 @@ export type PillVisualState = "idle" | "hover" | "expanded";
 
 export function getPillTargetStyle(
   state: PillVisualState,
-  hasNotificationBadge: boolean,
-  hasBattery: boolean = false
+  options: {
+    hasMedia?: boolean;
+    hasBattery?: boolean;
+    hasNotifications?: boolean;
+  } = {}
 ): { width: number; height: number; borderRadius: number; blur: number; shadow: number } {
   if (state === "expanded") {
     const d = pillDimensions.expanded;
     return { ...d, blur: 20, shadow: 0.35 };
   }
-  if (state === "hover") {
-    const d = hasBattery && hasNotificationBadge
-      ? pillDimensions.hoverWithBatteryAndNotifications
-      : hasBattery
-        ? pillDimensions.hoverWithBattery
-        : hasNotificationBadge
-          ? pillDimensions.hoverWithNotifications
-          : pillDimensions.hover;
-    return { ...d, blur: 14, shadow: 0.25 };
-  }
-  const d = hasBattery && hasNotificationBadge
-    ? pillDimensions.idleWithBatteryAndNotifications
-    : hasBattery
-      ? pillDimensions.idleWithBattery
-      : hasNotificationBadge
-        ? pillDimensions.idleWithNotifications
-        : pillDimensions.idle;
-  return { ...d, blur: 10, shadow: 0.2 };
+
+  const isHover = state === "hover";
+  const base = isHover ? pillDimensions.hover : pillDimensions.idle;
+
+  // Compute extra width needed for each active indicator
+  let extraWidth = 0;
+  if (options.hasMedia) extraWidth += 32;
+  if (options.hasBattery) extraWidth += isHover ? 40 : 28;
+  if (options.hasNotifications) extraWidth += isHover ? 40 : 50;
+  // When both battery and notifications share the right slot, reduce for shared gap space
+  if (options.hasBattery && options.hasNotifications && !isHover) extraWidth -= 2;
+
+  return {
+    width: base.width + extraWidth,
+    height: base.height,
+    borderRadius: base.borderRadius,
+    blur: isHover ? 14 : 10,
+    shadow: isHover ? 0.25 : 0.2,
+  };
 }
 
 // Idle pill slot animations (media, timer, notification badge) — enter/exit when active or turned off
