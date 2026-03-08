@@ -63,7 +63,7 @@ use windows::Foundation::TypedEventHandler;
 #[cfg(target_os = "windows")]
 use windows::UI::Notifications::Management::{UserNotificationListener, UserNotificationListenerAccessStatus};
 #[cfg(target_os = "windows")]
-use windows::UI::Notifications::{UserNotification, UserNotificationChangedEventArgs};
+use windows::UI::Notifications::{UserNotification, UserNotificationChangedEventArgs, UserNotificationChangedKind};
 
 #[cfg(target_os = "windows")]
 use brightness::blocking::Brightness;
@@ -128,6 +128,7 @@ pub struct SystemNotification {
     pub title: String,
     pub body: String,
     pub timestamp: u64,          // Unix timestamp in milliseconds
+    pub aumid: Option<String>,   // App User Model ID for activation after Windows dismissal
 }
 
 // =============================================================================
@@ -1580,6 +1581,28 @@ fn subscribe_notification_changed(
             move |_listener: &Option<UserNotificationListener>,
                   _args: &Option<UserNotificationChangedEventArgs>| {
                 use tauri::Emitter;
+
+                // Try to intercept new notifications: read content, dismiss from Windows, emit to frontend
+                if let Some(args) = _args {
+                    if let Ok(UserNotificationChangedKind::Added) = args.ChangeKind() {
+                        if let Ok(notif_id) = args.UserNotificationId() {
+                            if let Ok(listener) = UserNotificationListener::Current() {
+                                if let Ok(notifications) = poll_notifications_list(&listener) {
+                                    if let Some(notif) = notifications.iter().find(|n| n.Id().unwrap_or(0) == notif_id) {
+                                        if let Some(sn) = extract_notification(notif, 0) {
+                                            let _ = handle_for_event.emit("notification-added", &sn);
+                                            // Dismiss from Windows to suppress native toast banner
+                                            let _ = listener.RemoveNotification(notif_id);
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fallback: emit generic change event (removed notifications, or failed to read)
                 let _ = handle_for_event.emit("notification-changed", ());
                 Ok(())
             },
@@ -1640,110 +1663,115 @@ fn check_notification_access() -> Result<bool, String> {
     Ok(false)
 }
 
+/// Extract a SystemNotification from a Windows UserNotification.
+/// Returns None if the notification has no meaningful content.
+#[cfg(target_os = "windows")]
+fn extract_notification(notif: &UserNotification, idx: usize) -> Option<SystemNotification> {
+    let id = notif.Id().unwrap_or(idx as u32);
+
+    let app_name = notif
+        .AppInfo()
+        .ok()
+        .and_then(|app_info| app_info.DisplayInfo().ok())
+        .and_then(|display_info| display_info.DisplayName().ok())
+        .map(|h| h.to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Windows App".to_string());
+
+    let aumid = notif
+        .AppInfo()
+        .ok()
+        .and_then(|app_info| app_info.AppUserModelId().ok())
+        .map(|h| h.to_string())
+        .filter(|s| !s.is_empty());
+
+    let notification = notif.Notification().ok()?;
+    let visual = notification.Visual().ok()?;
+
+    let mut title = String::new();
+    let mut body = String::new();
+
+    if let Ok(bindings) = visual.Bindings() {
+        if let Ok(count) = bindings.Size() {
+            for i in 0..count {
+                if let Ok(binding) = bindings.GetAt(i) {
+                    if let Ok(elements) = binding.GetTextElements() {
+                        if let Ok(elem_count) = elements.Size() {
+                            for j in 0..elem_count {
+                                if let Ok(elem) = elements.GetAt(j) {
+                                    if let Ok(text) = elem.Text() {
+                                        let text_str = text.to_string();
+                                        if title.is_empty() {
+                                            title = text_str;
+                                        } else if body.is_empty() {
+                                            body = text_str;
+                                        } else {
+                                            body.push('\n');
+                                            body.push_str(&text_str);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    break; // Only process first binding
+                }
+            }
+        }
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let timestamp = notif
+        .CreationTime()
+        .ok()
+        .map(|dt| {
+            let ticks: i64 = dt.UniversalTime;
+            const EPOCH_OFFSET_100NS: i64 = 11644473600 * 10_000_000;
+            let unix_ms = ((ticks - EPOCH_OFFSET_100NS) / 10_000) as u64;
+            unix_ms
+        })
+        .filter(|&t| t > 0 && t < now + 86400_000)
+        .unwrap_or_else(|| now.saturating_sub(idx as u64 * 60000));
+
+    if title.is_empty() && body.is_empty() {
+        return None;
+    }
+
+    Some(SystemNotification {
+        id,
+        app_name,
+        title,
+        body,
+        timestamp,
+        aumid,
+    })
+}
+
 /// Get recent notifications.
 /// Uses cached access status to avoid re-polling access on every call.
 #[cfg(target_os = "windows")]
 #[tauri::command]
 fn get_notifications() -> Result<Vec<SystemNotification>, String> {
-    // Use cached access status instead of re-polling (saves ~150ms of blocking per call)
     if !NOTIFICATION_ACCESS_GRANTED.load(Ordering::Relaxed) {
         return Ok(Vec::new());
     }
 
     let listener = UserNotificationListener::Current()
         .map_err(|e| format!("Failed to get notification listener: {}", e))?;
-    
+
     let notifications = poll_notifications_list(&listener)?;
-    
-    let mut result = Vec::new();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    
-    for (idx, notif) in notifications.iter().take(10).enumerate() {
-        let id = notif.Id().unwrap_or(idx as u32);
-        
-        // Get real app display name from UserNotification.AppInfo -> DisplayInfo -> DisplayName
-        let app_name = notif
-            .AppInfo()
-            .ok()
-            .and_then(|app_info| app_info.DisplayInfo().ok())
-            .and_then(|display_info| display_info.DisplayName().ok())
-            .map(|h| h.to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Windows App".to_string());
-        
-        // Get notification content
-        let notification = match notif.Notification() {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-        
-        // Get visual content
-        let visual = match notification.Visual() {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        
-        // Try to extract title and body from binding
-        let mut title = String::new();
-        let mut body = String::new();
-        
-        if let Ok(bindings) = visual.Bindings() {
-            if let Ok(count) = bindings.Size() {
-                for i in 0..count {
-                    if let Ok(binding) = bindings.GetAt(i) {
-                        // Get text elements
-                        if let Ok(elements) = binding.GetTextElements() {
-                            if let Ok(elem_count) = elements.Size() {
-                                for j in 0..elem_count {
-                                    if let Ok(elem) = elements.GetAt(j) {
-                                        if let Ok(text) = elem.Text() {
-                                            let text_str = text.to_string();
-                                            if title.is_empty() {
-                                                title = text_str;
-                                            } else if body.is_empty() {
-                                                body = text_str;
-                                            } else {
-                                                body.push_str("\n");
-                                                body.push_str(&text_str);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        break; // Only process first binding
-                    }
-                }
-            }
-        }
-        
-        // Prefer notification CreationTime (100-ns since 1601-01-01), fallback to approximate
-        let timestamp = notif
-            .CreationTime()
-            .ok()
-            .map(|dt| {
-                let ticks: i64 = dt.UniversalTime;
-                const EPOCH_OFFSET_100NS: i64 = 11644473600 * 10_000_000; // 1601 to 1970 in 100-ns
-                let unix_ms = ((ticks - EPOCH_OFFSET_100NS) / 10_000) as u64;
-                unix_ms
-            })
-            .filter(|&t| t > 0 && t < now + 86400_000) // sanity: within last 24h or future 1 day
-            .unwrap_or_else(|| now.saturating_sub(idx as u64 * 60000));
-        
-        if !title.is_empty() || !body.is_empty() {
-            result.push(SystemNotification {
-                id,
-                app_name,
-                title,
-                body,
-                timestamp,
-            });
-        }
-    }
-    
+
+    let result: Vec<SystemNotification> = notifications
+        .iter()
+        .take(10)
+        .enumerate()
+        .filter_map(|(idx, notif)| extract_notification(notif, idx))
+        .collect();
+
     Ok(result)
 }
 
@@ -1834,6 +1862,60 @@ fn activate_notification(id: u32) -> Result<(), String> {
 #[tauri::command]
 fn activate_notification(_id: u32) -> Result<(), String> {
     Err("Notification activation not supported on this platform".to_string())
+}
+
+/// Activate an app by its AUMID directly (used when notification was already dismissed from Windows).
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn activate_app_by_aumid(aumid: String) -> Result<(), String> {
+    if aumid.is_empty() {
+        return Err("AUMID is empty".to_string());
+    }
+
+    unsafe {
+        let _ = AllowSetForegroundWindow(ASFW_ANY);
+    }
+
+    let shell_path = HSTRING::from(format!("shell:AppsFolder\\{}", aumid));
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            &HSTRING::from("open"),
+            &shell_path,
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if result.0 as isize > 32 {
+        return Ok(());
+    }
+
+    let explorer = HSTRING::from("explorer.exe");
+    let params = HSTRING::from(format!("shell:AppsFolder\\{}", aumid));
+    let result2 = unsafe {
+        ShellExecuteW(
+            None,
+            &HSTRING::from("open"),
+            &explorer,
+            &params,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    if result2.0 as isize <= 32 {
+        return Err(format!(
+            "Failed to activate app (ShellExecute returned {})",
+            result2.0 as isize
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn activate_app_by_aumid(_aumid: String) -> Result<(), String> {
+    Err("Not supported on this platform".to_string())
 }
 
 /// Dismiss a notification by ID
@@ -2000,6 +2082,7 @@ pub fn run() {
             get_notifications,
             dismiss_notification,
             activate_notification,
+            activate_app_by_aumid,
             // Auto-start
             check_autostart_enabled,
             set_autostart_enabled,

@@ -5,7 +5,8 @@
       "Bash(cargo check --manifest-path src-tauri/Cargo.toml)",
       "Bash(npx tauri build --debug)",
       "Bash(where.exe cargo)",
-      "Bash(export PATH=\"$PATH:$HOME/.cargo/bin:/c/Users/suhai/.cargo/bin\")"
+      "Bash(export PATH=\"$PATH:$HOME/.cargo/bin:/c/Users/suhai/.cargo/bin\")",
+      "Bash(/c/Users/suhai/.cargo/bin/cargo check --manifest-path src-tauri/Cargo.toml)"
     ]
   }
 }

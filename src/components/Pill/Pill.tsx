@@ -606,8 +606,12 @@ export function Pill() {
           style={{ top: "calc(100% + 10px)" }}
           onClickCapture={(e) => {
             e.stopPropagation();
-            const id = latestNotification.id;
-            tauriInvoke("activate_notification", { id }).catch(() => {});
+            const { id, aumid } = latestNotification;
+            if (aumid) {
+              tauriInvoke("activate_app_by_aumid", { aumid }).catch(() => {});
+            } else {
+              tauriInvoke("activate_notification", { id }).catch(() => {});
+            }
             clearLatestNotification();
           }}
         >
@@ -616,7 +620,12 @@ export function Pill() {
             onDismiss={clearLatestNotification}
             onActivate={async (id) => {
               try {
-                await tauriInvoke("activate_notification", { id });
+                const notif = notifications.find(n => n.id === id);
+                if (notif?.aumid) {
+                  await tauriInvoke("activate_app_by_aumid", { aumid: notif.aumid });
+                } else {
+                  await tauriInvoke("activate_notification", { id });
+                }
               } catch (_) { /* ignore */ }
             }}
             phase={notificationPhase}
@@ -932,7 +941,12 @@ export function Pill() {
                         onDismiss={dismissNotification}
                         onActivate={async (id) => {
                           try {
-                            await tauriInvoke("activate_notification", { id });
+                            const notif = notifications.find(n => n.id === id);
+                            if (notif?.aumid) {
+                              await tauriInvoke("activate_app_by_aumid", { aumid: notif.aumid });
+                            } else {
+                              await tauriInvoke("activate_notification", { id });
+                            }
                             dismissNotification(id);
                             handleClickOutside();
                           } catch (_) { /* ignore */ }

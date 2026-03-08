@@ -12,6 +12,7 @@ export interface SystemNotification {
   title: string;
   body: string;
   timestamp: number;  // Unix timestamp in milliseconds
+  aumid?: string;     // App User Model ID for direct activation
 }
 
 // Animation phase for notification flow
@@ -62,6 +63,38 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     return result ?? false;
   }, []);
 
+  // Trigger notification toast animation sequence for a new notification
+  const triggerNotificationAnimation = useCallback((notification: SystemNotification) => {
+    setLatestNotification(notification);
+    setIsNewNotification(true);
+
+    // Clear any existing timeouts
+    if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
+    if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
+    if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
+
+    // Phase 1: Incoming - toast appears below pill (3.5 seconds for readability)
+    setNotificationPhase("incoming");
+
+    // Phase 2: Absorbing - toast shrinks and moves into pill badge (400ms)
+    phaseTimeoutRef.current = setTimeout(() => {
+      setNotificationPhase("absorbing");
+
+      // Phase 3: Showing - badge visible in pill, toast fully gone
+      phaseTimeoutRef.current = setTimeout(() => {
+        setNotificationPhase("showing");
+        setLatestNotification(null);  // Clear toast, badge stays
+      }, 400);
+    }, 3500);
+
+    // Clear "new notification" pulse after full animation completes
+    newNotificationTimeoutRef.current = setTimeout(() => {
+      setIsNewNotification(false);
+    }, 4200);
+
+    lastSeenIdRef.current = notification.id;
+  }, []);
+
   // Fetch notifications (with in-flight guard)
   const fetchNotifications = useCallback(async () => {
     if (isPendingRef.current) return; // Skip if previous request still in-flight
@@ -82,6 +115,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
         title: string;
         body: string;
         timestamp: number;
+        aumid: string | null;
       }>>("get_notifications");
 
       if (result) {
@@ -91,40 +125,14 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
           title: n.title,
           body: n.body,
           timestamp: n.timestamp,
+          aumid: n.aumid ?? undefined,
         }));
 
         // Check for new notifications
         if (mapped.length > 0) {
           const newest = mapped[0];
-          // Show toast for any new notification (including the first one)
           if (newest.id !== lastSeenIdRef.current) {
-            // New notification arrived - start animation sequence
-            setLatestNotification(newest);
-            setIsNewNotification(true);
-
-            // Clear any existing timeouts
-            if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
-            if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
-            if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
-
-            // Phase 1: Incoming - toast appears below pill (3.5 seconds for readability)
-            setNotificationPhase("incoming");
-
-            // Phase 2: Absorbing - toast shrinks and moves into pill badge (400ms)
-            phaseTimeoutRef.current = setTimeout(() => {
-              setNotificationPhase("absorbing");
-
-              // Phase 3: Showing - badge visible in pill, toast fully gone
-              phaseTimeoutRef.current = setTimeout(() => {
-                setNotificationPhase("showing");
-                setLatestNotification(null);  // Clear toast, badge stays
-              }, 400);
-            }, 3500);
-
-            // Clear "new notification" pulse after full animation completes
-            newNotificationTimeoutRef.current = setTimeout(() => {
-              setIsNewNotification(false);
-            }, 4200);
+            triggerNotificationAnimation(newest);
           }
           lastSeenIdRef.current = newest.id;
         }
@@ -142,7 +150,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       isPendingRef.current = false;
       setIsLoading(false);
     }
-  }, [hasAccess, checkAccess]);
+  }, [hasAccess, checkAccess, triggerNotificationAnimation]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -182,12 +190,13 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     checkAccess();
   }, [checkAccess]);
 
-  const unlistenRef = useRef<(() => void) | null>(null);
+  const unlistenChangedRef = useRef<(() => void) | null>(null);
+  const unlistenAddedRef = useRef<(() => void) | null>(null);
 
-  // Real-time: listen for Windows notification-changed event from backend; fallback poll as backup
+  // Real-time: listen for Windows notification events from backend; fallback poll as backup
   useEffect(() => {
     let isMounted = true;
-    
+
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (isMounted) {
@@ -208,16 +217,51 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     startPolling();
 
     if (isMounted) {
+      // Listen for intercepted notifications (instant: backend already read content & dismissed from Windows)
+      listen<{
+        id: number;
+        app_name: string;
+        title: string;
+        body: string;
+        timestamp: number;
+        aumid: string | null;
+      }>("notification-added", (event) => {
+        if (!isMounted) return;
+        const n = event.payload;
+        const mapped: SystemNotification = {
+          id: n.id,
+          appName: n.app_name,
+          title: n.title,
+          body: n.body,
+          timestamp: n.timestamp,
+          aumid: n.aumid ?? undefined,
+        };
+
+        // Add to notifications list (dedupe by ID, prepend)
+        setNotifications(prev => {
+          if (prev.some(p => p.id === mapped.id)) return prev;
+          return [mapped, ...prev].slice(0, 10);
+        });
+
+        // Trigger toast animation if truly new
+        if (mapped.id !== lastSeenIdRef.current) {
+          triggerNotificationAnimation(mapped);
+        }
+      }).then((fn) => {
+        if (isMounted) unlistenAddedRef.current = fn;
+      }).catch(() => {});
+
+      // Fallback: generic change event (for removals, or if interception failed)
       listen("notification-changed", () => {
         if (isMounted) fetchNotifications();
       }).then((fn) => {
-        if (isMounted) unlistenRef.current = fn;
+        if (isMounted) unlistenChangedRef.current = fn;
       }).catch(() => {});
     }
 
     const onVisibilityChange = () => {
       if (!isMounted) return;
-      
+
       if (document.hidden) {
         stopPolling();
       } else {
@@ -225,7 +269,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
         startPolling();
       }
     };
-    
+
     if (isMounted) {
       document.addEventListener("visibilitychange", onVisibilityChange);
     }
@@ -236,11 +280,13 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
       if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
       if (newNotificationTimeoutRef.current) clearTimeout(newNotificationTimeoutRef.current);
-      unlistenRef.current?.();
-      unlistenRef.current = null;
+      unlistenChangedRef.current?.();
+      unlistenChangedRef.current = null;
+      unlistenAddedRef.current?.();
+      unlistenAddedRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [pollInterval, fetchNotifications]);
+  }, [pollInterval, fetchNotifications, triggerNotificationAnimation]);
 
   return {
     notifications,
