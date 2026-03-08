@@ -1441,17 +1441,11 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
     })
 }
 
-/// Payload for set_system_brightness (frontend sends { level: 0..100 })
-#[derive(Deserialize)]
-struct SetBrightnessPayload {
-    level: u32,
-}
-
 /// Set system brightness (0-100): try WMI (laptops) first, then DDC/CI (external monitors)
 #[cfg(target_os = "windows")]
 #[tauri::command]
-fn set_system_brightness(payload: SetBrightnessPayload) -> Result<(), String> {
-    let level = payload.level.min(100);
+fn set_system_brightness(level: u32) -> Result<(), String> {
+    let level = level.min(100);
 
     // 1. Try brightness crate first (WMI - works on laptop internal panels)
     for device_result in brightness::blocking::brightness_devices() {
@@ -1494,7 +1488,7 @@ fn set_system_brightness(payload: SetBrightnessPayload) -> Result<(), String> {
 
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
-fn set_system_brightness(_payload: SetBrightnessPayload) -> Result<(), String> {
+fn set_system_brightness(_level: u32) -> Result<(), String> {
     Err("Brightness control not supported on this platform".to_string())
 }
 

@@ -34,10 +34,13 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
+  const suppressPollUntilRef = useRef(0);
 
   // Fetch brightness info (with in-flight guard)
   const fetchBrightness = useCallback(async () => {
     if (isPendingRef.current) return;
+    // Skip poll if we recently set brightness manually
+    if (Date.now() < suppressPollUntilRef.current) return;
     isPendingRef.current = true;
     try {
       const result = await tauriInvoke<{
@@ -71,11 +74,17 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
   // Set brightness level — only update state if backend succeeds
   const setBrightness = useCallback(async (level: number) => {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
+    // Suppress polling for 2s so it doesn't overwrite with the old value
+    suppressPollUntilRef.current = Date.now() + 2000;
+    // Optimistically update UI immediately
+    setBrightnessState(prev => ({ ...prev, level: clampedLevel }));
     const ok = await tauriInvoke("set_system_brightness", { level: clampedLevel });
-    if (ok !== null) {
-      setBrightnessState(prev => ({ ...prev, level: clampedLevel }));
+    if (ok === null) {
+      // Backend failed — re-fetch actual brightness
+      suppressPollUntilRef.current = 0;
+      await fetchBrightness();
     }
-  }, []);
+  }, [fetchBrightness]);
 
   // Start polling when mounted
   useEffect(() => {

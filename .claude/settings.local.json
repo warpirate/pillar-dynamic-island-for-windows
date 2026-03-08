@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc --noEmit)"
+      "Bash(npx tsc --noEmit)",
+      "Bash(cargo check --manifest-path src-tauri/Cargo.toml)",
+      "Bash(npx tauri build --debug)",
+      "Bash(where.exe cargo)",
+      "Bash(export PATH=\"$PATH:$HOME/.cargo/bin:/c/Users/suhai/.cargo/bin\")"
     ]
   }
 }

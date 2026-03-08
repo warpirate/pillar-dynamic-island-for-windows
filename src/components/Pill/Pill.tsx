@@ -11,6 +11,7 @@ import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
 import { useBattery } from "../../hooks/useBattery";
 import { usePrismAI } from "../../hooks/usePrismAI";
+import { useAppearance, hexToRgba } from "../../hooks/useAppearance";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { BatteryIndicator } from "./modules/BatteryModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
@@ -153,6 +154,10 @@ export function Pill() {
     isCritical: isBatteryCritical,
   } = useBattery(60000); // Poll every 60s (battery changes slowly)
 
+  // Appearance settings (mode, opacity, accent color)
+  const appearance = useAppearance();
+  const isNotch = appearance.active.mode === "notch";
+
   const {
     messages: prismMessages,
     actions: prismActions,
@@ -236,9 +241,16 @@ export function Pill() {
   const pillSpring = springConfig.snappy;
   const width = useSpring(pillDimensions.boot.width, pillSpring);
   const height = useSpring(pillDimensions.boot.height, pillSpring);
-  const borderRadius = useSpring(pillDimensions.boot.borderRadius, pillSpring);
+  const borderRadiusTop = useSpring(pillDimensions.boot.borderRadius, pillSpring);
+  const borderRadiusBottom = useSpring(pillDimensions.boot.borderRadius, pillSpring);
   const blurAmount = useSpring(8, pillSpring);
   const shadowOpacity = useSpring(0.2, pillSpring);
+
+  // Combined borderRadius: top-left top-right bottom-right bottom-left
+  const borderRadius = useTransform(
+    [borderRadiusTop, borderRadiusBottom],
+    ([t, b]: number[]) => `${t}px ${t}px ${b}px ${b}px`
+  );
 
   // Transform blur and shadow for style (static shadow when idle to avoid any blink)
   const backdropFilter = useTransform(blurAmount, (v) => `blur(${v}px)`);
@@ -260,14 +272,16 @@ export function Pill() {
       setBootPhase("morph");
       width.set(pillDimensions.idle.width);
       height.set(pillDimensions.idle.height);
-      borderRadius.set(pillDimensions.idle.borderRadius);
+      borderRadiusBottom.set(pillDimensions.idle.borderRadius);
+      borderRadiusTop.set(isNotch ? 0 : pillDimensions.idle.borderRadius);
 
       await new Promise((r) => setTimeout(r, bootAnimationDuration.morphToPill));
 
       // Phase 3: Zoom in like hover, then back out
       width.set(pillDimensions.hover.width);
       height.set(pillDimensions.hover.height);
-      borderRadius.set(pillDimensions.hover.borderRadius);
+      borderRadiusBottom.set(pillDimensions.hover.borderRadius);
+      borderRadiusTop.set(isNotch ? 0 : pillDimensions.hover.borderRadius);
       blurAmount.set(12);
       shadowOpacity.set(0.25);
 
@@ -279,7 +293,7 @@ export function Pill() {
     };
 
     sequence();
-  }, [isBooting, width, height, borderRadius, blurAmount, shadowOpacity, completeBootAnimation]);
+  }, [isBooting, width, height, borderRadiusTop, borderRadiusBottom, isNotch, blurAmount, shadowOpacity, completeBootAnimation]);
 
   // Single place for hover/expanded/unhover: one visual state → one target style
   const visualState: PillVisualState = isExpanded ? "expanded" : isHovering ? "hover" : "idle";
@@ -294,10 +308,11 @@ export function Pill() {
     });
     width.set(target.width);
     height.set(target.height);
-    borderRadius.set(target.borderRadius);
+    borderRadiusBottom.set(target.borderRadius);
+    borderRadiusTop.set(isNotch ? 0 : target.borderRadius);
     blurAmount.set(target.blur);
     shadowOpacity.set(target.shadow);
-  }, [isBooting, visualState, showMediaInIdle, showBatteryInIdle, hasNotificationBadge, width, height, borderRadius, blurAmount, shadowOpacity]);
+  }, [isBooting, visualState, isNotch, showMediaInIdle, showBatteryInIdle, hasNotificationBadge, width, height, borderRadiusTop, borderRadiusBottom, blurAmount, shadowOpacity]);
 
   // Keep window always receiving clicks so the pill is clickable.
   // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
@@ -522,7 +537,10 @@ export function Pill() {
         overflow: "visible",
         background: isBooting && bootPhase === "dot"
           ? "radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(200,200,200,0.6) 100%)"
-          : "linear-gradient(135deg, rgba(20, 20, 22, 0.94) 0%, rgba(30, 30, 35, 0.90) 50%, rgba(15, 15, 18, 0.96) 100%)",
+          : (() => {
+              const op = appearance.active.opacity / 100;
+              return `linear-gradient(135deg, rgba(20, 20, 22, ${op}) 0%, rgba(30, 30, 35, ${op * 0.957}) 50%, rgba(15, 15, 18, ${Math.min(1, op * 1.021)}) 100%)`;
+            })(),
       }}
       initial={{ opacity: 0, scale: 0 }}
       animate={{ 
@@ -691,7 +709,7 @@ export function Pill() {
                 >
                   {time.length > 0 ? (
                     <>
-                      <span style={{ color: "#EB0028", textShadow: "0 0 10px rgba(235, 0, 40, 0.5)" }}>
+                      <span style={{ color: appearance.active.accentColor, textShadow: `0 0 10px ${hexToRgba(appearance.active.accentColor, 0.5)}` }}>
                         {time[0]}
                       </span>
                       <span style={{ color: "#ffffff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>
@@ -752,6 +770,8 @@ export function Pill() {
             className="absolute inset-0 flex flex-col p-2.5"
             role="region"
             aria-label="PILLAR expanded content"
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -760,7 +780,10 @@ export function Pill() {
             {/* Header row with time - time as single unit */}
             <div className="flex items-center justify-between mb-1.5">
               <div className="flex items-center gap-pill-md">
-                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-red-500/40 to-orange-500/30 flex items-center justify-center flex-shrink-0">
+                <div
+                  className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                  style={{ background: `linear-gradient(to bottom right, ${hexToRgba(appearance.active.accentColor, 0.4)}, ${hexToRgba(appearance.active.accentColor, 0.2)})` }}
+                >
                   <span className="text-white text-pill-xs font-bold">P</span>
                 </div>
                 <span className="text-white text-pill-md font-semibold tracking-wide">PILLAR</span>
@@ -832,6 +855,7 @@ export function Pill() {
                     id="panel-timer"
                     role="tabpanel"
                     aria-labelledby="tab-timer"
+                    className="overflow-y-auto flex-1 min-h-0"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
@@ -857,6 +881,7 @@ export function Pill() {
                     id="panel-media"
                     role="tabpanel"
                     aria-labelledby="tab-media"
+                    className="overflow-y-auto flex-1 min-h-0"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
@@ -877,6 +902,7 @@ export function Pill() {
                     id="panel-notifications"
                     role="tabpanel"
                     aria-labelledby="tab-notifications"
+                    className="overflow-y-auto flex-1 min-h-0"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
@@ -922,6 +948,7 @@ export function Pill() {
                     id="panel-settings"
                     role="tabpanel"
                     aria-labelledby="tab-settings"
+                    className="overflow-y-auto flex-1 min-h-0"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
@@ -940,6 +967,7 @@ export function Pill() {
                       onSessionMuteToggle={setSessionMute}
                       autoStartEnabled={autoStartEnabled}
                       onAutoStartToggle={() => setAutoStartEnabled(!autoStartEnabled)}
+                      appearance={appearance}
                     />
                   </motion.div>
                 )}
@@ -950,7 +978,7 @@ export function Pill() {
                     id="panel-prism"
                     role="tabpanel"
                     aria-labelledby="tab-prism"
-                    className="w-full h-full min-h-0 flex flex-col"
+                    className="w-full h-full min-h-0 flex flex-col overflow-y-auto"
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}

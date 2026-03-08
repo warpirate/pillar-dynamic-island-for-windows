@@ -4,7 +4,10 @@ import type { VolumeInfo } from "../../../hooks/useVolume";
 import type { BrightnessInfo } from "../../../hooks/useBrightness";
 import type { AudioDevice } from "../../../hooks/useAudioDevices";
 import type { AudioSession } from "../../../hooks/usePerAppMixer";
+import type { AppearanceSettings } from "../../../hooks/useAppearance";
+import { ACCENT_PRESETS } from "../../../hooks/useAppearance";
 import { PerAppMixer } from "./PerAppMixer";
+import { AppearanceModule } from "./AppearanceModule";
 import { microInteractions, PILL_DURATION_FAST, PILL_DURATION_MEDIUM } from "../animations";
 
 // =============================================================================
@@ -409,6 +412,16 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
 // Quick Settings Panel (Expanded View)
 // =============================================================================
 
+interface AppearanceControls {
+  active: AppearanceSettings;
+  isEditing: boolean;
+  startEditing: () => void;
+  updateDraft: (changes: Partial<AppearanceSettings>) => void;
+  save: () => void;
+  reset: () => void;
+  discard: () => void;
+}
+
 interface QuickSettingsProps {
   volume: VolumeInfo;
   onVolumeChange: (level: number) => void;
@@ -422,11 +435,12 @@ interface QuickSettingsProps {
   onSessionMuteToggle: (processId: number, muted: boolean) => void;
   autoStartEnabled: boolean;
   onAutoStartToggle: () => void;
+  appearance: AppearanceControls;
 }
 
-export function QuickSettings({ 
-  volume, 
-  onVolumeChange, 
+export function QuickSettings({
+  volume,
+  onVolumeChange,
   onMuteToggle,
   brightness,
   onBrightnessChange,
@@ -437,11 +451,56 @@ export function QuickSettings({
   onSessionMuteToggle,
   autoStartEnabled,
   onAutoStartToggle,
+  appearance,
 }: QuickSettingsProps) {
   const [showMixer, setShowMixer] = useState(false);
+  const [view, setView] = useState<"main" | "appearance">("main");
+
+  // Discard draft on unmount (tab switch, pill collapse)
+  useEffect(() => {
+    return () => {
+      appearance.discard();
+    };
+  }, [appearance.discard]);
+
+  // Appearance sub-view
+  if (view === "appearance") {
+    return (
+      <AppearanceModule
+        settings={appearance.active}
+        onUpdate={appearance.updateDraft}
+        onSave={() => { appearance.save(); setView("main"); }}
+        onReset={() => { appearance.reset(); setView("main"); }}
+        onBack={() => { appearance.discard(); setView("main"); }}
+      />
+    );
+  }
+
+  const accentName = ACCENT_PRESETS.find(p => p.value === appearance.active.accentColor)?.name ?? "Custom";
 
   return (
     <div className="flex flex-col gap-1.5 py-0">
+      {/* Appearance row */}
+      <motion.button
+        className="w-full flex items-center gap-2.5 px-2 py-2 bg-white/5 rounded-lg hover:bg-white/[0.08] transition-colors"
+        onClick={() => { appearance.startEditing(); setView("appearance"); }}
+        whileTap={{ scale: 0.98 }}
+      >
+        <div
+          className="w-4 h-4 rounded-full flex-shrink-0"
+          style={{ background: appearance.active.accentColor, opacity: 0.8 }}
+        />
+        <div className="flex flex-col items-start flex-1 min-w-0">
+          <span className="text-white/90 text-[12px] font-medium leading-tight">Appearance</span>
+          <span className="text-white/35 text-[10px] leading-tight">
+            {appearance.active.mode === "island" ? "Island" : "Notch"} · {accentName} · {appearance.active.opacity}%
+          </span>
+        </div>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white/25 flex-shrink-0">
+          <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+        </svg>
+      </motion.button>
+
       {/* Audio output device */}
       <div className="flex flex-col gap-1">
         <span className="text-white/90 text-[12px]">Output</span>
