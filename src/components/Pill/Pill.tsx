@@ -26,6 +26,7 @@ import { PrismModule } from "./modules/PrismModule";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
 import { createFocusTrap } from "../../utils/focusTrap";
 import { tauriInvoke } from "../../lib/tauri";
+import { platformApi } from "../../lib/platform";
 import type { PrismAction } from "../../types/prism";
 import { createPillThemeTokens, resolveReducedMotion } from "./themeTokens";
 
@@ -235,7 +236,7 @@ export function Pill() {
     if (!appSettings.behavior.pause_other_sessions || !media?.isPlaying) return;
     const currentTitle = media.title;
     if (prevMediaTitleRef.current !== null && prevMediaTitleRef.current !== currentTitle) {
-      tauriInvoke("pause_other_sessions").catch(() => {});
+      platformApi.pauseOtherSessions().catch(() => {});
     }
     prevMediaTitleRef.current = currentTitle;
   }, [media?.title, media?.isPlaying, appSettings.behavior.pause_other_sessions]);
@@ -858,11 +859,14 @@ export function Pill() {
           onClickCapture={(e) => {
             e.stopPropagation();
             const { id, aumid } = latestNotification;
-            if (aumid) {
-              tauriInvoke("activate_app_by_aumid", { aumid }).catch(() => {});
-            } else {
-              tauriInvoke("activate_notification", { id }).catch(() => {});
-            }
+            platformApi.getCapabilities().then((caps) => {
+              if (!caps.notifications) return;
+              if (aumid) {
+                platformApi.activateAppByAumid(aumid).catch(() => {});
+              } else {
+                platformApi.activateNotification(id).catch(() => {});
+              }
+            }).catch(() => {});
             clearLatestNotification();
           }}
         >
@@ -871,11 +875,13 @@ export function Pill() {
             onDismiss={clearLatestNotification}
             onActivate={async (id) => {
               try {
+                const caps = await platformApi.getCapabilities();
+                if (!caps.notifications) return;
                 const notif = notifications.find(n => n.id === id);
                 if (notif?.aumid) {
-                  await tauriInvoke("activate_app_by_aumid", { aumid: notif.aumid });
+                  await platformApi.activateAppByAumid(notif.aumid);
                 } else {
-                  await tauriInvoke("activate_notification", { id });
+                  await platformApi.activateNotification(id);
                 }
               } catch (_) { /* ignore */ }
             }}
@@ -1224,11 +1230,13 @@ export function Pill() {
                         onDismiss={dismissNotification}
                         onActivate={async (id) => {
                           try {
+                            const caps = await platformApi.getCapabilities();
+                            if (!caps.notifications) return;
                             const notif = notifications.find(n => n.id === id);
                             if (notif?.aumid) {
-                              await tauriInvoke("activate_app_by_aumid", { aumid: notif.aumid });
+                              await platformApi.activateAppByAumid(notif.aumid);
                             } else {
-                              await tauriInvoke("activate_notification", { id });
+                              await platformApi.activateNotification(id);
                             }
                             dismissNotification(id);
                             handleClickOutside();

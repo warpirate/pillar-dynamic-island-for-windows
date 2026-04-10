@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 import { useGracefulDegradation } from "./useGracefulDegradation";
 
@@ -55,14 +55,12 @@ export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<Array<{
-        session_id: string;
-        app_name: string;
-        process_id: number;
-        volume: number;
-        is_muted: boolean;
-        is_active: boolean;
-      }>>("list_audio_sessions");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.perAppMixer) {
+        setSessions([]);
+        return;
+      }
+      const result = await platformApi.listAudioSessions();
 
       if (result) {
         setSessions(result.map(s => ({
@@ -94,7 +92,9 @@ export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
     // Mark user as active
     triggerActivity();
     try {
-      await tauriInvoke("set_session_volume", { processId, level: clampedVolume });
+      const caps = await platformApi.getCapabilities();
+      if (!caps.perAppMixer) return;
+      await platformApi.setSessionVolume(processId, clampedVolume);
       clearError("audio_mixer_control");
     } catch (e) {
       handleError("audio_mixer_control", e instanceof Error ? e : "Failed to set app volume");
@@ -113,7 +113,9 @@ export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
     // Mark user as active
     triggerActivity();
     try {
-      await tauriInvoke("set_session_mute", { processId, muted });
+      const caps = await platformApi.getCapabilities();
+      if (!caps.perAppMixer) return;
+      await platformApi.setSessionMute(processId, muted);
       clearError("audio_mixer_control");
     } catch (e) {
       handleError("audio_mixer_control", e instanceof Error ? e : "Failed to set app mute");

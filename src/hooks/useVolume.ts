@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 
 // =============================================================================
@@ -44,7 +44,7 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<{ level: number; is_muted: boolean }>("get_system_volume");
+      const result = await platformApi.getSystemVolume();
       if (result) {
         setVolumeState({
           level: result.level,
@@ -67,14 +67,14 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
   // Set volume level
   const setVolume = useCallback(async (level: number) => {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
-    await tauriInvoke("set_system_volume", { level: clampedLevel });
+    await platformApi.setSystemVolume(clampedLevel);
     setVolumeState(prev => ({ ...prev, level: clampedLevel }));
     triggerActivity(); // Mark user as active
   }, [triggerActivity]);
 
   // Toggle mute
   const toggleMute = useCallback(async () => {
-    const newMuted = await tauriInvoke<boolean>("toggle_mute");
+    const newMuted = await platformApi.toggleMute();
     if (newMuted !== null) {
       setVolumeState(prev => ({ ...prev, isMuted: newMuted }));
     }

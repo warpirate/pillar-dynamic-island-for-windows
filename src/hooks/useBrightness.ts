@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 
 // =============================================================================
@@ -55,12 +55,12 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
     if (Date.now() < suppressPollUntilRef.current) return;
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<{
-        level: number;
-        min: number;
-        max: number;
-        is_supported: boolean;
-      }>("get_system_brightness");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.brightness) {
+        setBrightnessState((prev) => ({ ...prev, isSupported: false }));
+        return;
+      }
+      const result = await platformApi.getSystemBrightness();
 
       if (result) {
         setBrightnessState({
@@ -86,13 +86,15 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
   // Set brightness level — only update state if backend succeeds
   const setBrightness = useCallback(async (level: number) => {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
+    const caps = await platformApi.getCapabilities();
+    if (!caps.brightness) return;
     // Suppress polling for 2s so it doesn't overwrite with the old value
     suppressPollUntilRef.current = Date.now() + 2000;
     // Mark user as active
     triggerActivity();
     // Optimistically update UI immediately
     setBrightnessState(prev => ({ ...prev, level: clampedLevel }));
-    const ok = await tauriInvoke("set_system_brightness", { level: clampedLevel });
+    const ok = await platformApi.setSystemBrightness(clampedLevel);
     if (ok === null) {
       // Backend failed — re-fetch actual brightness
       suppressPollUntilRef.current = 0;

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 
 // =============================================================================
@@ -49,12 +49,17 @@ export function useBattery(pollInterval = 60000): UseBatteryReturn {
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<{
-        percent: number;
-        is_charging: boolean;
-        is_battery_saver: boolean;
-        has_battery: boolean;
-      }>("get_battery_info");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.battery) {
+        setBattery({
+          percent: 0,
+          isCharging: false,
+          isBatterySaver: false,
+          hasBattery: false,
+        });
+        return;
+      }
+      const result = await platformApi.getBatteryInfo();
       if (result) {
         setBattery({
           percent: result.percent,

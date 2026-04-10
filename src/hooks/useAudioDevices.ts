@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 import { useGracefulDegradation } from "./useGracefulDegradation";
 
@@ -52,11 +52,13 @@ export function useAudioDevices(pollInterval = 5000): UseAudioDevicesReturn {
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<Array<{
-        id: string;
-        name: string;
-        is_default: boolean;
-      }>>("list_audio_devices");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.audioDevices) {
+        setDevices([]);
+        setDefaultDevice(null);
+        return;
+      }
+      const result = await platformApi.listAudioDevices();
 
       if (result) {
         const mapped = result.map(d => ({

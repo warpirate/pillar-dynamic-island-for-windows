@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 import { useGracefulDegradation } from "./useGracefulDegradation";
 
@@ -43,25 +43,6 @@ interface UseMediaSessionReturn {
   refresh: () => Promise<void>;
 }
 
-interface RawMediaInfo {
-  title: string;
-  artist: string;
-  album?: string;
-  is_playing: boolean;
-  app_name?: string;
-}
-
-interface RawMediaTimeline {
-  position_ms: number;
-  duration_ms: number;
-  can_seek: boolean;
-}
-
-interface RawMediaPlaybackInfo {
-  repeat_mode: string;
-  is_shuffle: boolean;
-}
-
 // =============================================================================
 // Hook
 // =============================================================================
@@ -100,7 +81,15 @@ export function useMediaSession(
     if (isPendingRef.current) return; // Skip if previous request still in-flight
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<RawMediaInfo | null>("get_media_session");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaSession) {
+        setMedia(null);
+        setTimeline(null);
+        setPlaybackInfo(null);
+        setError(null);
+        return;
+      }
+      const result = await platformApi.getMediaSession();
 
       // Transform snake_case to camelCase
       const transformed = result
@@ -128,7 +117,7 @@ export function useMediaSession(
 
       // Fetch timeline and playback info when media exists
       if (transformed) {
-        const rawTimeline = await tauriInvoke<RawMediaTimeline | null>("get_media_timeline");
+        const rawTimeline = await platformApi.getMediaTimeline();
         if (rawTimeline) {
           setTimeline({
             positionMs: rawTimeline.position_ms,
@@ -139,7 +128,7 @@ export function useMediaSession(
           setTimeline(null);
         }
 
-        const rawPlayback = await tauriInvoke<RawMediaPlaybackInfo | null>("get_media_playback_info");
+        const rawPlayback = await platformApi.getMediaPlaybackInfo();
         if (rawPlayback) {
           setPlaybackInfo({
             repeatMode: rawPlayback.repeat_mode as "none" | "track" | "list",
@@ -169,7 +158,9 @@ export function useMediaSession(
   // Media controls
   const playPause = useCallback(async () => {
     try {
-      await tauriInvoke("media_play_pause");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.mediaPlayPause();
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to toggle play/pause");
@@ -180,7 +171,9 @@ export function useMediaSession(
 
   const next = useCallback(async () => {
     try {
-      await tauriInvoke("media_next");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.mediaNext();
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to skip next");
@@ -191,7 +184,9 @@ export function useMediaSession(
 
   const previous = useCallback(async () => {
     try {
-      await tauriInvoke("media_previous");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.mediaPrevious();
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to go previous");
@@ -202,7 +197,9 @@ export function useMediaSession(
 
   const toggleRepeat = useCallback(async () => {
     try {
-      await tauriInvoke("media_toggle_repeat");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.mediaToggleRepeat();
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to toggle repeat");
@@ -213,7 +210,9 @@ export function useMediaSession(
 
   const toggleShuffle = useCallback(async () => {
     try {
-      await tauriInvoke("media_toggle_shuffle");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.mediaToggleShuffle();
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to toggle shuffle");
@@ -224,7 +223,9 @@ export function useMediaSession(
 
   const seekTo = useCallback(async (positionMs: number) => {
     try {
-      await tauriInvoke("seek_media", { positionMs: Math.round(positionMs) });
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.seekMedia(Math.round(positionMs));
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to seek media");
@@ -235,7 +236,9 @@ export function useMediaSession(
 
   const pauseOtherSessions = useCallback(async () => {
     try {
-      await tauriInvoke("pause_other_sessions");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.mediaControls) return;
+      await platformApi.pauseOtherSessions();
       clearError("media_controls");
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to pause other sessions");

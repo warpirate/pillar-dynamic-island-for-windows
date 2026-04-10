@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { tauriInvoke } from "../lib/tauri";
+import { platformApi } from "../lib/platform";
 import { useAdaptivePolling } from "./useAdaptivePolling";
 import { useGracefulDegradation } from "./useGracefulDegradation";
 
@@ -93,7 +93,12 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
   // Check notification access
   const checkAccess = useCallback(async () => {
     try {
-      const result = await tauriInvoke<boolean>("check_notification_access");
+      const caps = await platformApi.getCapabilities();
+      if (!caps.notifications) {
+        setHasAccess(false);
+        return false;
+      }
+      const result = await platformApi.checkNotificationAccess();
       if (result !== null) {
         setHasAccess(result);
       }
@@ -152,14 +157,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
     isPendingRef.current = true;
     try {
-      const result = await tauriInvoke<Array<{
-        id: number;
-        app_name: string;
-        title: string;
-        body: string;
-        timestamp: number;
-        aumid: string | null;
-      }>>("get_notifications");
+      const result = await platformApi.getNotifications();
 
       if (result) {
         const mapped = result.map(n => ({
@@ -206,7 +204,9 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     // Mark user as active
     triggerActivity();
     try {
-      await tauriInvoke("dismiss_notification", { id });
+      const caps = await platformApi.getCapabilities();
+      if (!caps.notifications) return;
+      await platformApi.dismissNotification(id);
       clearError("notifications_dismiss");
     } catch (e) {
       handleError("notifications_dismiss", e instanceof Error ? e : "Failed to dismiss notification");

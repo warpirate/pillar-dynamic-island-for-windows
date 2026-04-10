@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+mod platform;
 
 /// Cached notification access status so we don't re-poll it on every get_notifications() call.
 static NOTIFICATION_ACCESS_GRANTED: AtomicBool = AtomicBool::new(false);
@@ -2482,6 +2483,11 @@ fn get_battery_info() -> Result<BatteryInfo, String> {
     })
 }
 
+#[tauri::command]
+fn get_platform_capabilities() -> platform::PlatformCapabilities {
+    platform::current_capabilities()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -2532,6 +2538,8 @@ pub fn run() {
             set_autostart_enabled,
             // Battery
             get_battery_info,
+            // Platform capabilities
+            get_platform_capabilities,
             // Settings persistence
             load_settings,
             save_settings,
