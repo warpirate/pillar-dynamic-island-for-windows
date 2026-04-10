@@ -8,6 +8,13 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  --pillar-surface-primary: rgba(20, 20, 22, 0.94);
+  --pillar-surface-secondary: rgba(30, 30, 35, 0.9);
+  --pillar-border: rgba(255, 255, 255, 0.12);
+  --pillar-text: #ffffff;
+  --pillar-text-muted: rgba(255, 255, 255, 0.65);
+  --pillar-accent: #eb0028;
+  --pillar-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
 }
 
 * {

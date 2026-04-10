@@ -15,6 +15,7 @@ import { useAppearance, hexToRgba } from "../../hooks/useAppearance";
 import { useSettings } from "../../hooks/useSettings";
 import { useAdaptivePolling } from "../../hooks/useAdaptivePolling";
 import { useScreenReader, useAnnounceListChange } from "../../hooks/useScreenReader";
+import { useDesktopGestures } from "../../hooks/useDesktopGestures";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { BatteryIndicator } from "./modules/BatteryModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
@@ -26,9 +27,17 @@ import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators
 import { createFocusTrap } from "../../utils/focusTrap";
 import { tauriInvoke } from "../../lib/tauri";
 import type { PrismAction } from "../../types/prism";
+import { createPillThemeTokens, resolveReducedMotion } from "./themeTokens";
 
 // Tab type for expanded view
 type ExpandedTab = "timer" | "media" | "notifications" | "settings" | "prism";
+const EXPANDED_TAB_CONFIG: Array<{ id: ExpandedTab; label: string; icon: string; ariaLabel: string; hasBadge?: boolean }> = [
+  { id: "timer", label: "Timer", icon: "⏱", ariaLabel: "Timer module" },
+  { id: "media", label: "Media", icon: "🎵", ariaLabel: "Media controls" },
+  { id: "notifications", label: "Notifs", icon: "🔔", ariaLabel: "Notifications", hasBadge: true },
+  { id: "settings", label: "Settings", icon: "⚙", ariaLabel: "Settings" },
+  { id: "prism", label: "Prism", icon: "AI", ariaLabel: "Prism AI assistant" },
+];
 
 // Helper to get current time string
 const getTimeString = () => {
@@ -254,8 +263,12 @@ export function Pill() {
   });
 
   // Whether to show notification badge in the pill
-  const hasNotificationBadge = notifications.length > 0 &&
+  const hasNotificationBadge = appSettings.layout.idle_indicators.notifications && notifications.length > 0 &&
     (notificationPhase === "showing" || notificationPhase === "idle");
+  const themeTokens = createPillThemeTokens({ ...appearance.active, accentColor: effectiveAccentColor });
+  const reducedMotion = resolveReducedMotion(appSettings.motion.reduced_motion_override);
+  const visibleTabs = EXPANDED_TAB_CONFIG.filter((tab) => appSettings.layout.visible_tabs[tab.id]);
+  const safeTabs = visibleTabs.length > 0 ? visibleTabs : EXPANDED_TAB_CONFIG;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const expandedContentRef = useRef<HTMLDivElement>(null);
@@ -266,6 +279,18 @@ export function Pill() {
   const [time, setTime] = useState(getTimeString);
   const [dateStr, setDateStr] = useState(getDateString);
   const [seconds, setSeconds] = useState(getSecondsString);
+  const panelTransitionDuration = reducedMotion ? 0.08 : PILL_DURATION_FAST;
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--pillar-surface-primary", themeTokens.surfacePrimary);
+    root.style.setProperty("--pillar-surface-secondary", themeTokens.surfaceSecondary);
+    root.style.setProperty("--pillar-border", themeTokens.borderColor);
+    root.style.setProperty("--pillar-text", themeTokens.textPrimary);
+    root.style.setProperty("--pillar-text-muted", themeTokens.textMuted);
+    root.style.setProperty("--pillar-accent", themeTokens.accent);
+    root.style.setProperty("--pillar-shadow", themeTokens.shadow);
+  }, [themeTokens]);
 
   // Clock ticks whenever pill is shown (after boot) so time is always correct
   // Pause only when document is hidden (window minimized) to save CPU
@@ -306,10 +331,42 @@ export function Pill() {
   const hasTimerAlert = timer.isComplete;
   const hasMediaPlaying = media?.isPlaying ?? false;
   const showTimerInIdle = hasTimerActive && !isExpanded;
-  const showMediaInIdle = hasMediaPlaying && !isExpanded;
+  const showMediaInIdle = hasMediaPlaying && !isExpanded && appSettings.layout.idle_indicators.media;
 
   // Whether to show battery indicator in the idle pill
-  const showBatteryInIdle = battery.hasBattery;
+  const showBatteryInIdle = battery.hasBattery && appSettings.layout.idle_indicators.battery;
+
+  useEffect(() => {
+    if (!safeTabs.some((t) => t.id === activeTab)) {
+      setActiveTab(safeTabs[0].id);
+    }
+  }, [activeTab, safeTabs]);
+
+  const goToTab = useCallback((direction: -1 | 1) => {
+    const ids = safeTabs.map((tab) => tab.id);
+    const currentIndex = ids.indexOf(activeTab);
+    const startIndex = currentIndex >= 0 ? currentIndex : 0;
+    const nextIndex = direction === 1
+      ? (startIndex + 1) % ids.length
+      : (startIndex - 1 + ids.length) % ids.length;
+    setActiveTab(ids[nextIndex]);
+  }, [activeTab, safeTabs]);
+
+  const { handlers: gestureHandlers, contextMenu, closeContextMenu } = useDesktopGestures({
+    enabled: true,
+    reducedMotion,
+    onSwipeLeft: () => {
+      if (isExpanded) goToTab(1);
+    },
+    onSwipeRight: () => {
+      if (isExpanded) goToTab(-1);
+    },
+    onLongPress: () => {
+      if (!isExpanded && (isHovering || isIdle)) {
+        handleClick();
+      }
+    },
+  });
 
   // Snappy spring so hover-in and unhover-out feel the same
   const pillSpring = springConfig.snappy;
@@ -468,7 +525,7 @@ export function Pill() {
       // Arrow keys: navigate tabs (only when expanded)
       if (isExpanded && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
-        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings", "prism"];
+        const tabs = safeTabs.map((tab) => tab.id);
         const currentIndex = tabs.indexOf(activeTab);
         let nextIndex: number;
         
@@ -486,7 +543,7 @@ export function Pill() {
       // Home/End: navigate to first/last tab (only when expanded)
       if (isExpanded && (e.key === "Home" || e.key === "End")) {
         e.preventDefault();
-        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings", "prism"];
+        const tabs = safeTabs.map((tab) => tab.id);
         
         if (e.key === "Home") {
           setActiveTab(tabs[0]);
@@ -500,7 +557,7 @@ export function Pill() {
       // Tab/Shift+Tab: manage focus within expanded view
       if (isExpanded && (e.key === "Tab")) {
         e.preventDefault();
-        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings", "prism"];
+        const tabs = safeTabs.map((tab) => tab.id);
         const currentIndex = tabs.indexOf(activeTab);
         
         if (e.shiftKey) {
@@ -519,7 +576,7 @@ export function Pill() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isExpanded, isHovering, isIdle, activeTab, handleClick, handleClickOutside]);
+  }, [isExpanded, isHovering, isIdle, activeTab, handleClick, handleClickOutside, safeTabs]);
 
   // Screen reader announcements for key state changes
   const prevTimerStateRef = useRef(timer);
@@ -725,19 +782,21 @@ export function Pill() {
         overflow: "visible",
         background: isBooting && bootPhase === "dot"
           ? "radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(200,200,200,0.6) 100%)"
-          : (() => {
-              const op = appearance.active.opacity / 100;
-              return `linear-gradient(135deg, rgba(20, 20, 22, ${op}) 0%, rgba(30, 30, 35, ${op * 0.957}) 50%, rgba(15, 15, 18, ${Math.min(1, op * 1.021)}) 100%)`;
-            })(),
+          : `linear-gradient(135deg, var(--pillar-surface-primary) 0%, var(--pillar-surface-secondary) 60%, rgba(15, 15, 18, 0.95) 100%)`,
+        border: `1px solid ${themeTokens.borderColor}`,
       }}
       initial={{ opacity: 0, scale: 0 }}
       animate={{ 
         opacity: 1, 
         scale: 1,
       }}
-      transition={springConfig.bouncy}
+      transition={reducedMotion ? { duration: 0.1, ease: "easeOut" } : springConfig.bouncy}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onPointerDown={gestureHandlers.onPointerDown}
+      onPointerMove={gestureHandlers.onPointerMove}
+      onPointerUp={gestureHandlers.onPointerUp}
+      onContextMenu={gestureHandlers.onContextMenu}
       onClick={() => {
         handleClick();
         triggerActivity(); // Mark user as active
@@ -976,7 +1035,7 @@ export function Pill() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: PILL_DURATION_FAST }}
+            transition={{ duration: panelTransitionDuration }}
           >
             {/* Header row with time - time as single unit */}
             <div className="flex items-center justify-between mb-1.5">
@@ -1004,20 +1063,14 @@ export function Pill() {
               role="tablist"
               aria-label="PILLAR modules"
             >
-              {[
-                { id: "timer" as const, label: "Timer", icon: "⏱", ariaLabel: "Timer module" },
-                { id: "media" as const, label: "Media", icon: "🎵", ariaLabel: "Media controls" },
-                { id: "notifications" as const, label: "Notifs", icon: "🔔", badge: notifications.length > 0 ? notifications.length : undefined, ariaLabel: `Notifications${notifications.length > 0 ? ` (${notifications.length} unread)` : ""}` },
-                { id: "settings" as const, label: "Settings", icon: "⚙", ariaLabel: "Settings" },
-                { id: "prism" as const, label: "Prism", icon: "AI", ariaLabel: "Prism AI assistant" },
-              ].map(tab => (
+              {safeTabs.map(tab => (
                 <motion.button
                   key={tab.id}
                   id={`tab-${tab.id}`}
                   role="tab"
                   aria-selected={activeTab === tab.id}
                   aria-controls={`panel-${tab.id}`}
-                  aria-label={tab.ariaLabel}
+                  aria-label={tab.id === "notifications" && notifications.length > 0 ? `Notifications (${notifications.length} unread)` : tab.ariaLabel}
                   tabIndex={activeTab === tab.id ? 0 : -1}
                   className={`relative flex-1 py-1 px-0.5 rounded-md text-[12px] font-medium transition-colors ${
                     activeTab === tab.id 
@@ -1035,12 +1088,12 @@ export function Pill() {
                 >
                   <span className="mr-0.5" aria-hidden="true">{tab.icon}</span>
                   {tab.label}
-                  {'badge' in tab && tab.badge && (
+                  {tab.hasBadge && notifications.length > 0 && (
                     <span 
                       className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 rounded-full text-[10px] text-white font-medium flex items-center justify-center"
-                      aria-label={`${tab.badge} notifications`}
+                      aria-label={`${notifications.length} notifications`}
                     >
-                      {tab.badge > 9 ? "9+" : tab.badge}
+                      {notifications.length > 9 ? "9+" : notifications.length}
                     </span>
                   )}
                 </motion.button>
@@ -1060,7 +1113,7 @@ export function Pill() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: PILL_DURATION_FAST }}
+                    transition={{ duration: panelTransitionDuration }}
                   >
                     <TimerExpanded
                       timer={timer}
@@ -1090,7 +1143,7 @@ export function Pill() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: PILL_DURATION_FAST }}
+                    transition={{ duration: panelTransitionDuration }}
                   >
                     <MediaExpanded
                       media={media}
@@ -1119,7 +1172,7 @@ export function Pill() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: PILL_DURATION_FAST }}
+                    transition={{ duration: panelTransitionDuration }}
                   >
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center justify-between gap-2 mb-1">
@@ -1196,7 +1249,7 @@ export function Pill() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: PILL_DURATION_FAST }}
+                    transition={{ duration: panelTransitionDuration }}
                   >
                     <QuickSettings
                       volume={volume}
@@ -1211,6 +1264,8 @@ export function Pill() {
                       onSessionMuteToggle={setSessionMute}
                       autoStartEnabled={autoStartEnabled}
                       onAutoStartToggle={() => setAutoStartEnabled(!autoStartEnabled)}
+                      layoutSettings={appSettings.layout}
+                      onLayoutChange={(layoutPatch) => updateSettings({ layout: layoutPatch })}
                       appearance={appearance}
                       motionSettings={{
                         animationSpeed: appSettings.motion.animation_speed,
@@ -1230,7 +1285,7 @@ export function Pill() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    transition={{ duration: PILL_DURATION_FAST }}
+                    transition={{ duration: panelTransitionDuration }}
                   >
                     <PrismModule
                       messages={prismMessages}
@@ -1254,6 +1309,61 @@ export function Pill() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {contextMenu.isOpen && (
+        <div
+          className="fixed inset-0 z-[120]"
+          onClick={closeContextMenu}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            closeContextMenu();
+          }}
+        >
+          <div
+            className="absolute min-w-[150px] rounded-md border border-white/15 bg-black/85 backdrop-blur-md p-1.5"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              type="button"
+              className="w-full text-left text-[11px] text-white/85 px-2 py-1 rounded hover:bg-white/10"
+              onClick={() => {
+                if (isExpanded) {
+                  handleClickOutside();
+                } else {
+                  handleClick();
+                }
+                closeContextMenu();
+              }}
+            >
+              {isExpanded ? "Collapse" : "Expand"}
+            </button>
+            {isExpanded && (
+              <>
+                <button
+                  type="button"
+                  className="w-full text-left text-[11px] text-white/85 px-2 py-1 rounded hover:bg-white/10"
+                  onClick={() => {
+                    goToTab(-1);
+                    closeContextMenu();
+                  }}
+                >
+                  Previous tab
+                </button>
+                <button
+                  type="button"
+                  className="w-full text-left text-[11px] text-white/85 px-2 py-1 rounded hover:bg-white/10"
+                  onClick={() => {
+                    goToTab(1);
+                    closeContextMenu();
+                  }}
+                >
+                  Next tab
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
     </motion.div>
   );

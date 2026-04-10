@@ -89,6 +89,10 @@ export function useAppearance() {
           motion: { animation_speed: 1.0, reduced_motion_override: "system" },
           behavior: { launch_at_startup: false, pause_other_sessions: false },
           timer: { last_custom_label: "", last_custom_minutes: 25 },
+          layout: {
+            visible_tabs: { timer: true, media: true, notifications: true, settings: true, prism: true },
+            idle_indicators: { media: true, battery: true, notifications: true },
+          },
         };
         fullSettings.appearance = {
           mode: merged.mode,

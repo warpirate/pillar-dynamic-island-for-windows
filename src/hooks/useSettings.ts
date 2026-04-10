@@ -27,11 +27,27 @@ export interface TimerSettingsData {
   last_custom_minutes: number;
 }
 
+export interface LayoutSettingsData {
+  visible_tabs: {
+    timer: boolean;
+    media: boolean;
+    notifications: boolean;
+    settings: boolean;
+    prism: boolean;
+  };
+  idle_indicators: {
+    media: boolean;
+    battery: boolean;
+    notifications: boolean;
+  };
+}
+
 export interface AppSettings {
   appearance: AppearanceSettingsData;
   motion: MotionSettingsData;
   behavior: BehaviorSettingsData;
   timer: TimerSettingsData;
+  layout: LayoutSettingsData;
 }
 
 export const SETTINGS_DEFAULTS: AppSettings = {
@@ -53,6 +69,20 @@ export const SETTINGS_DEFAULTS: AppSettings = {
     last_custom_label: "",
     last_custom_minutes: 25,
   },
+  layout: {
+    visible_tabs: {
+      timer: true,
+      media: true,
+      notifications: true,
+      settings: true,
+      prism: true,
+    },
+    idle_indicators: {
+      media: true,
+      battery: true,
+      notifications: true,
+    },
+  },
 };
 
 // =============================================================================
@@ -66,19 +96,31 @@ interface UseSettingsReturn {
   reload: () => Promise<void>;
 }
 
-type DeepPartial<T> = {
+export type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
 
-function deepMerge(base: AppSettings, patch: DeepPartial<AppSettings>): AppSettings {
-  const result = { ...base };
-  for (const section of Object.keys(patch) as (keyof AppSettings)[]) {
-    const patchSection = patch[section];
-    if (patchSection && typeof patchSection === "object") {
-      result[section] = { ...result[section], ...patchSection } as never;
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function deepMerge<T>(base: T, patch: DeepPartial<T>): T {
+  if (!isPlainObject(base) || !isPlainObject(patch)) {
+    return (patch as T) ?? base;
+  }
+
+  const result: Record<string, unknown> = { ...base as Record<string, unknown> };
+  for (const key of Object.keys(patch)) {
+    const patchValue = (patch as Record<string, unknown>)[key];
+    if (patchValue === undefined) continue;
+    const baseValue = (base as Record<string, unknown>)[key];
+    if (isPlainObject(baseValue) && isPlainObject(patchValue)) {
+      result[key] = deepMerge(baseValue, patchValue as DeepPartial<typeof baseValue>);
+    } else {
+      result[key] = patchValue;
     }
   }
-  return result;
+  return result as T;
 }
 
 export function useSettings(): UseSettingsReturn {

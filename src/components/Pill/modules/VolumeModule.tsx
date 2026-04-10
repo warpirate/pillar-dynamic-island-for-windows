@@ -6,6 +6,7 @@ import type { AudioDevice } from "../../../hooks/useAudioDevices";
 import type { AudioSession } from "../../../hooks/usePerAppMixer";
 import type { AppearanceSettings } from "../../../hooks/useAppearance";
 import { ACCENT_PRESETS } from "../../../hooks/useAppearance";
+import type { LayoutSettingsData } from "../../../hooks/useSettings";
 import { PerAppMixer } from "./PerAppMixer";
 import { AppearanceModule } from "./AppearanceModule";
 import { microInteractions, PILL_DURATION_FAST, PILL_DURATION_MEDIUM } from "../animations";
@@ -443,6 +444,8 @@ interface QuickSettingsProps {
   onSessionMuteToggle: (processId: number, muted: boolean) => void;
   autoStartEnabled: boolean;
   onAutoStartToggle: () => void;
+  layoutSettings?: LayoutSettingsData;
+  onLayoutChange?: (patch: Partial<LayoutSettingsData>) => void;
   appearance: AppearanceControls;
   motionSettings?: MotionSettings;
 }
@@ -460,6 +463,8 @@ export function QuickSettings({
   onSessionMuteToggle,
   autoStartEnabled,
   onAutoStartToggle,
+  layoutSettings,
+  onLayoutChange,
   appearance,
   motionSettings,
 }: QuickSettingsProps) {
@@ -586,6 +591,84 @@ export function QuickSettings({
 
       {/* Divider */}
       <div className="h-px bg-white/5 my-0.5" />
+
+      {layoutSettings && onLayoutChange && (
+        <div className="flex flex-col gap-1 rounded-lg bg-white/5 p-2">
+          <span className="text-white/85 text-[11px] uppercase tracking-wider">Layout</span>
+          <div className="grid grid-cols-2 gap-1">
+            {(["timer", "media", "notifications", "settings", "prism"] as const).map((tabId) => (
+              <button
+                key={tabId}
+                type="button"
+                className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                  layoutSettings.visible_tabs[tabId]
+                    ? "bg-white/20 text-white"
+                    : "bg-white/8 text-white/60 hover:text-white hover:bg-white/12"
+                }`}
+                aria-label={`${layoutSettings.visible_tabs[tabId] ? "Hide" : "Show"} ${tabId} tab`}
+                aria-pressed={layoutSettings.visible_tabs[tabId]}
+                onClick={() =>
+                  onLayoutChange({
+                    visible_tabs: {
+                      ...layoutSettings.visible_tabs,
+                      [tabId]: !layoutSettings.visible_tabs[tabId],
+                    },
+                  })
+                }
+              >
+                {tabId}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-1 mt-1">
+            {(["media", "battery", "notifications"] as const).map((indicatorKey) => (
+              <button
+                key={indicatorKey}
+                type="button"
+                className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                  layoutSettings.idle_indicators[indicatorKey]
+                    ? "bg-white/15 text-white"
+                    : "bg-white/8 text-white/60 hover:text-white hover:bg-white/12"
+                }`}
+                aria-label={`${layoutSettings.idle_indicators[indicatorKey] ? "Hide" : "Show"} ${indicatorKey} idle indicator`}
+                aria-pressed={layoutSettings.idle_indicators[indicatorKey]}
+                onClick={() =>
+                  onLayoutChange({
+                    idle_indicators: {
+                      ...layoutSettings.idle_indicators,
+                      [indicatorKey]: !layoutSettings.idle_indicators[indicatorKey],
+                    },
+                  })
+                }
+              >
+                {indicatorKey}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/75 hover:text-white hover:bg-white/15"
+            onClick={() =>
+              onLayoutChange({
+                visible_tabs: {
+                  timer: true,
+                  media: true,
+                  notifications: true,
+                  settings: true,
+                  prism: true,
+                },
+                idle_indicators: {
+                  media: true,
+                  battery: true,
+                  notifications: true,
+                },
+              })
+            }
+          >
+            Reset layout
+          </button>
+        </div>
+      )}
 
       {/* Auto-start toggle */}
       <ToggleSwitch
