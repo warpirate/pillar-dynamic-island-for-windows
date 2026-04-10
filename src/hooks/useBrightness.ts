@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { tauriInvoke } from "../lib/tauri";
+import { useAdaptivePolling } from "./useAdaptivePolling";
 
 // =============================================================================
 // Types
@@ -35,9 +36,20 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
   const suppressPollUntilRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  // Adaptive polling for reduced CPU usage
+  const { activityLevel, isDeepSleep, triggerActivity, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
+    baseInterval: pollInterval,
+    activeInterval: Math.max(2000, pollInterval / 2),
+    idleThreshold: 30000,
+    deepSleepInterval: pollInterval * 3,
+    deepSleepThreshold: 300000,
+  });
 
   // Fetch brightness info (with in-flight guard)
   const fetchBrightness = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (isPendingRef.current) return;
     // Skip poll if we recently set brightness manually
     if (Date.now() < suppressPollUntilRef.current) return;
@@ -76,6 +88,8 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
     // Suppress polling for 2s so it doesn't overwrite with the old value
     suppressPollUntilRef.current = Date.now() + 2000;
+    // Mark user as active
+    triggerActivity();
     // Optimistically update UI immediately
     setBrightnessState(prev => ({ ...prev, level: clampedLevel }));
     const ok = await tauriInvoke("set_system_brightness", { level: clampedLevel });
@@ -84,26 +98,33 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
       suppressPollUntilRef.current = 0;
       await fetchBrightness();
     }
-  }, [fetchBrightness]);
+  }, [fetchBrightness, triggerActivity]);
+
+  // Start polling function
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    // Use adaptive polling interval
+    const interval = getCurrentInterval();
+    pollIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current) fetchBrightness();
+    }, interval);
+  }, [getCurrentInterval, fetchBrightness]);
+
+  // Stop polling function
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
 
   // Start polling when mounted
   useEffect(() => {
-    const startPolling = () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(fetchBrightness, pollInterval);
-    };
-
-    const stopPolling = () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-
     const handleVisibilityChange = () => {
       if (document.hidden) {
         stopPolling();
       } else {
+        resetIdleTimer();
         fetchBrightness();
         startPolling();
       }
@@ -114,10 +135,18 @@ export function useBrightness(pollInterval = 10000): UseBrightnessReturn {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      isMountedRef.current = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [fetchBrightness, pollInterval]);
+  }, [fetchBrightness, startPolling, stopPolling, resetIdleTimer]);
+
+  // Restart polling when activity level or deep sleep state changes
+  useEffect(() => {
+    if (!document.hidden) {
+      startPolling();
+    }
+  }, [activityLevel, isDeepSleep, startPolling]);
 
   return {
     brightness,

@@ -13,6 +13,8 @@ import { useBattery } from "../../hooks/useBattery";
 import { usePrismAI } from "../../hooks/usePrismAI";
 import { useAppearance, hexToRgba } from "../../hooks/useAppearance";
 import { useSettings } from "../../hooks/useSettings";
+import { useAdaptivePolling } from "../../hooks/useAdaptivePolling";
+import { useScreenReader, useAnnounceListChange } from "../../hooks/useScreenReader";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { BatteryIndicator } from "./modules/BatteryModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
@@ -58,6 +60,24 @@ export function Pill() {
     setTimerState,
     setTimerAlert,
   } = usePillState();
+  
+  // Adaptive polling for reduced CPU usage
+  const { triggerActivity } = useAdaptivePolling({
+    baseInterval: 5000,
+    activeInterval: 1000,
+    idleThreshold: 30000,
+    deepSleepInterval: 15000,
+    deepSleepThreshold: 300000,
+  });
+
+  // Screen reader support
+  const { announce } = useScreenReader({
+    defaultPriority: "polite",
+    announcementDelay: 100,
+    deduplicate: true,
+    deduplicationWindow: 5000,
+  });
+  const announceListChange = useAnnounceListChange(announce);
 
   // Timer hook
   const {
@@ -432,6 +452,7 @@ export function Pill() {
         } else if (isHovering || isIdle) {
           handleClick();
         }
+        triggerActivity(); // Mark user as active
         return;
       }
 
@@ -449,6 +470,40 @@ export function Pill() {
         }
         
         setActiveTab(tabs[nextIndex]);
+        triggerActivity(); // Mark user as active
+        return;
+      }
+
+      // Home/End: navigate to first/last tab (only when expanded)
+      if (isExpanded && (e.key === "Home" || e.key === "End")) {
+        e.preventDefault();
+        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings", "prism"];
+        
+        if (e.key === "Home") {
+          setActiveTab(tabs[0]);
+        } else {
+          setActiveTab(tabs[tabs.length - 1]);
+        }
+        triggerActivity(); // Mark user as active
+        return;
+      }
+
+      // Tab/Shift+Tab: manage focus within expanded view
+      if (isExpanded && (e.key === "Tab")) {
+        e.preventDefault();
+        const tabs: ExpandedTab[] = ["timer", "media", "notifications", "settings", "prism"];
+        const currentIndex = tabs.indexOf(activeTab);
+        
+        if (e.shiftKey) {
+          // Shift+Tab: move to previous tab
+          const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
+          setActiveTab(tabs[prevIndex]);
+        } else {
+          // Tab: move to next tab
+          const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
+          setActiveTab(tabs[nextIndex]);
+        }
+        triggerActivity(); // Mark user as active
         return;
       }
     };
@@ -456,6 +511,85 @@ export function Pill() {
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isExpanded, isHovering, isIdle, activeTab, handleClick, handleClickOutside]);
+
+  // Screen reader announcements for key state changes
+  const prevTimerStateRef = useRef(timer);
+  const prevMediaStateRef = useRef(media);
+  const prevNotificationsRef = useRef(notifications);
+  const prevActiveTabRef = useRef(activeTab);
+  const prevVolumeRef = useRef(volume);
+
+  // Announce timer state changes
+  useEffect(() => {
+    const prev = prevTimerStateRef.current;
+    if (prev.isActive !== timer.isActive) {
+      if (timer.isActive) {
+        announce(`Timer started: ${timer.label}`);
+      } else if (timer.isComplete) {
+        announce(`Timer completed: ${timer.label}`, "assertive");
+      } else if (prev.isActive && !timer.isActive && !timer.isPaused) {
+        announce("Timer stopped");
+      }
+    }
+    if (prev.isPaused !== timer.isPaused && timer.isPaused) {
+      announce("Timer paused");
+    }
+    if (prev.isPaused !== timer.isPaused && !timer.isPaused && timer.isActive) {
+      announce("Timer resumed");
+    }
+    prevTimerStateRef.current = timer;
+  }, [timer, announce]);
+
+  // Announce media state changes
+  useEffect(() => {
+    const prev = prevMediaStateRef.current;
+    if (prev?.title !== media?.title && media?.title) {
+      announce(`Now playing: ${media.title} by ${media.artist || "Unknown Artist"}`);
+    }
+    if (prev?.isPlaying !== media?.isPlaying) {
+      if (media?.isPlaying) {
+        announce("Media playing");
+      } else {
+        announce("Media paused");
+      }
+    }
+    prevMediaStateRef.current = media;
+  }, [media, announce]);
+
+  // Announce notification changes
+  useEffect(() => {
+    const prev = prevNotificationsRef.current;
+    announceListChange(notifications, prev, "notification", "notifications", "notifications");
+    prevNotificationsRef.current = notifications;
+  }, [notifications, announceListChange]);
+
+  // Announce tab changes
+  useEffect(() => {
+    const prev = prevActiveTabRef.current;
+    if (prev !== activeTab) {
+      const tabNames: Record<ExpandedTab, string> = {
+        timer: "Timer",
+        media: "Media",
+        notifications: "Notifications",
+        settings: "Settings",
+        prism: "Prism AI",
+      };
+      announce(`Switched to ${tabNames[activeTab]} tab`);
+    }
+    prevActiveTabRef.current = activeTab;
+  }, [activeTab, announce]);
+
+  // Announce volume changes
+  useEffect(() => {
+    const prev = prevVolumeRef.current;
+    if (prev?.level !== volume?.level && volume?.level !== undefined) {
+      announce(`Volume: ${Math.round(volume.level * 100)}%`);
+    }
+    if (prev?.isMuted !== volume?.isMuted) {
+      announce(volume?.isMuted ? "Muted" : "Unmuted");
+    }
+    prevVolumeRef.current = volume;
+  }, [volume, announce]);
 
   const runPrismAction = useCallback(
     async (action: PrismAction): Promise<string> => {
@@ -595,11 +729,15 @@ export function Pill() {
       transition={springConfig.bouncy}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      onClick={handleClick}
+      onClick={() => {
+        handleClick();
+        triggerActivity(); // Mark user as active
+      }}
       onKeyDown={(e) => {
         if (!isExpanded && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
           handleClick();
+          triggerActivity(); // Mark user as active
         }
       }}
     >

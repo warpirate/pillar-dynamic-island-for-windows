@@ -82,6 +82,119 @@ export const microInteractions = {
   },
 };
 
+// =============================================================================
+// Animation Performance Optimizations
+// =============================================================================
+
+// GPU layer promotion hints - use these properties to promote elements to GPU layers
+// This reduces repaints and improves animation performance
+export const gpuLayerHints = {
+  // For elements that animate transform (scale, translate, rotate)
+  transform: {
+    willChange: "transform",
+    backfaceVisibility: "hidden" as const,
+    WebkitBackfaceVisibility: "hidden" as const,
+  },
+  // For elements that animate opacity
+  opacity: {
+    willChange: "opacity",
+  },
+  // For elements that animate both transform and opacity
+  transformAndOpacity: {
+    willChange: "transform, opacity",
+    backfaceVisibility: "hidden" as const,
+    WebkitBackfaceVisibility: "hidden" as const,
+  },
+  // For elements that animate layout (width, height) - use sparingly
+  layout: {
+    willChange: "width, height",
+  },
+  // Reset will-change after animation completes
+  reset: {
+    willChange: "auto",
+  },
+};
+
+// Animation frame budgeting - limits concurrent animations to prevent jank
+let activeAnimations = 0;
+const MAX_CONCURRENT_ANIMATIONS = 8;
+
+export const animationFrameBudget = {
+  canStartAnimation: () => activeAnimations < MAX_CONCURRENT_ANIMATIONS,
+  startAnimation: () => {
+    activeAnimations++;
+  },
+  endAnimation: () => {
+    activeAnimations = Math.max(0, activeAnimations - 1);
+  },
+  getActiveCount: () => activeAnimations,
+};
+
+// Performance-aware animation variants that include GPU hints
+export const optimizedAnimations = {
+  // Optimized pill container animations
+  pill: {
+    initial: { ...gpuLayerHints.transformAndOpacity, opacity: 0, scale: 0 },
+    animate: { opacity: 1, scale: 1 },
+    exit: { opacity: 0, scale: 0.95 },
+    transition: springConfig.snappy,
+  },
+  // Optimized hover animations
+  hover: {
+    whileHover: prefersReducedMotion ? {} : { scale: 1.02 },
+    whileTap: { scale: 0.98 },
+    style: gpuLayerHints.transform,
+    transition: springConfig.gentle,
+  },
+  // Optimized slide animations
+  slideIn: {
+    initial: { ...gpuLayerHints.transformAndOpacity, opacity: 0, x: -20 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: 20 },
+    transition: springConfig.snappy,
+  },
+  // Optimized fade animations
+  fadeIn: {
+    initial: { ...gpuLayerHints.opacity, opacity: 0 },
+    animate: { opacity: 1 },
+    exit: { opacity: 0 },
+    transition: { duration: PILL_DURATION_FAST },
+  },
+  // Optimized scale animations
+  scaleIn: {
+    initial: { ...gpuLayerHints.transformAndOpacity, opacity: 0, scale: 0.8 },
+    animate: { opacity: 1, scale: 1 },
+    exit: { opacity: 0, scale: 0.8 },
+    transition: springConfig.snappy,
+  },
+};
+
+// CSS class names for GPU layer promotion (can be used in className prop)
+export const gpuLayerClasses = {
+  promote: "gpu-layer-promote",
+  promoteTransform: "gpu-layer-promote-transform",
+  promoteOpacity: "gpu-layer-promote-opacity",
+};
+
+// Add these CSS classes to index.css for GPU layer promotion:
+/*
+.gpu-layer-promote {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.gpu-layer-promote-transform {
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.gpu-layer-promote-opacity {
+  will-change: opacity;
+}
+*/
+
 // Pill dimension configurations
 // Note: These are logical dimensions (DPI-aware via Tauri's LogicalSize)
 // Tauri automatically handles scale factor conversion, so these values work correctly

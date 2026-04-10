@@ -1,57 +1,94 @@
 import { motion, AnimatePresence } from "motion/react";
+import { useMemo, useCallback } from "react";
 import type { SystemNotification } from "../../../hooks/useNotifications";
-import { notificationAnimations, microInteractions, PILL_DURATION_FAST } from "../animations";
+import { notificationAnimations, microInteractions, PILL_DURATION_FAST, gpuLayerHints } from "../animations";
 
 // =============================================================================
 // Shared Utilities
 // =============================================================================
 
-// Get app color based on app name hash (gradient version for toast/cards)
-const getAppColorGradient = (name: string) => {
-  const colors = [
-    "from-blue-500/40 to-blue-600/30",
-    "from-green-500/40 to-green-600/30",
-    "from-purple-500/40 to-purple-600/30",
-    "from-pink-500/40 to-pink-600/30",
-    "from-orange-500/40 to-orange-600/30",
-    "from-cyan-500/40 to-cyan-600/30",
-  ];
+// =============================================================================
+// Color Cache for Memory Optimization
+// =============================================================================
+
+// Simple hash function for consistent color assignment
+const hashString = (str: string): number => {
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
   }
-  return colors[Math.abs(hash) % colors.length];
+  return Math.abs(hash);
+};
+
+// Color arrays
+const gradientColors = [
+  "from-blue-500/40 to-blue-600/30",
+  "from-green-500/40 to-green-600/30",
+  "from-purple-500/40 to-purple-600/30",
+  "from-pink-500/40 to-pink-600/30",
+  "from-orange-500/40 to-orange-600/30",
+  "from-cyan-500/40 to-cyan-600/30",
+];
+
+const accentColors = [
+  { hex: "#3b82f6", rgb: "59, 130, 246" },   // blue
+  { hex: "#22c55e", rgb: "34, 197, 94" },     // green
+  { hex: "#a855f7", rgb: "168, 85, 247" },    // purple
+  { hex: "#ec4899", rgb: "236, 72, 153" },    // pink
+  { hex: "#f97316", rgb: "249, 115, 22" },    // orange
+  { hex: "#06b6d4", rgb: "6, 182, 212" },     // cyan
+];
+
+const solidColors = [
+  "bg-blue-500", "bg-green-500", "bg-purple-500",
+  "bg-pink-500", "bg-orange-500", "bg-cyan-500",
+];
+
+// Cache for computed colors to avoid repeated calculations
+const colorCache = new Map<string, {
+  gradient: string;
+  accent: { hex: string; rgb: string };
+  solid: string;
+}>();
+
+// Get app color based on app name hash (gradient version for toast/cards)
+const getAppColorGradient = (name: string): string => {
+  const cached = colorCache.get(name);
+  if (cached) return cached.gradient;
+  
+  const result = gradientColors[hashString(name) % gradientColors.length];
+  colorCache.set(name, { gradient: result, accent: accentColors[hashString(name) % accentColors.length], solid: solidColors[hashString(name) % solidColors.length] });
+  return result;
 };
 
 // Get app accent color (hex for glows/borders)
-const getAppAccentColor = (name: string) => {
-  const colors = [
-    { hex: "#3b82f6", rgb: "59, 130, 246" },   // blue
-    { hex: "#22c55e", rgb: "34, 197, 94" },     // green
-    { hex: "#a855f7", rgb: "168, 85, 247" },    // purple
-    { hex: "#ec4899", rgb: "236, 72, 153" },    // pink
-    { hex: "#f97316", rgb: "249, 115, 22" },    // orange
-    { hex: "#06b6d4", rgb: "6, 182, 212" },     // cyan
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
+const getAppAccentColor = (name: string): { hex: string; rgb: string } => {
+  const cached = colorCache.get(name);
+  if (cached) return cached.accent;
+  
+  const result = accentColors[hashString(name) % accentColors.length];
+  colorCache.set(name, { gradient: gradientColors[hashString(name) % gradientColors.length], accent: result, solid: solidColors[hashString(name) % solidColors.length] });
+  return result;
 };
 
 // Get app color (solid version for indicators)
-const getAppColorSolid = (name: string) => {
-  const colors = [
-    "bg-blue-500", "bg-green-500", "bg-purple-500",
-    "bg-pink-500", "bg-orange-500", "bg-cyan-500",
-  ];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
+const getAppColorSolid = (name: string): string => {
+  const cached = colorCache.get(name);
+  if (cached) return cached.solid;
+  
+  const result = solidColors[hashString(name) % solidColors.length];
+  colorCache.set(name, { gradient: gradientColors[hashString(name) % gradientColors.length], accent: accentColors[hashString(name) % accentColors.length], solid: result });
+  return result;
 };
+
+// Clear color cache periodically to prevent memory leaks
+if (typeof window !== "undefined") {
+  setInterval(() => {
+    if (colorCache.size > 100) {
+      colorCache.clear();
+    }
+  }, 60000); // Clear every minute if cache gets too large
+}
 
 // =============================================================================
 // Notification Indicator (Shows in idle pill when notifications exist)
@@ -326,20 +363,20 @@ interface NotificationCardProps {
 }
 
 export function NotificationCard({ notification, onDismiss, onActivate }: NotificationCardProps) {
-  // Format timestamp
-  const formatTime = (timestamp: number) => {
+  // Memoize formatted time to avoid recalculation
+  const formattedTime = useMemo(() => {
     const now = Date.now();
-    const diff = now - timestamp;
-
+    const diff = now - notification.timestamp;
+ 
     if (diff < 60000) return "just now";
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return new Date(timestamp).toLocaleDateString();
-  };
+    return new Date(notification.timestamp).toLocaleDateString();
+  }, [notification.timestamp]);
 
-  const handleActivate = () => {
+  const handleActivate = useCallback(() => {
     onActivate?.(notification.id);
-  };
+  }, [onActivate, notification.id]);
 
   return (
     <motion.div
@@ -358,6 +395,7 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
       }}
       role="button"
       tabIndex={0}
+      style={gpuLayerHints.transformAndOpacity}
     >
       <div className="flex items-start gap-2">
         {/* App icon */}
@@ -376,7 +414,7 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
             >
               {notification.appName}
             </span>
-            <span className="text-white/70 text-pill-xs flex-shrink-0">{formatTime(notification.timestamp)}</span>
+            <span className="text-white/70 text-pill-xs flex-shrink-0">{formattedTime}</span>
           </div>
           <h4
             className="text-white text-pill-md font-medium truncate mt-pill-xs"
@@ -458,8 +496,8 @@ export function NotificationsList({ notifications, hasAccess, onDismiss, onActiv
 
   return (
     <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-0.5">
-      <AnimatePresence>
-        {notifications.map((notification) => (
+      <AnimatePresence mode="popLayout">
+        {notifications.slice(0, 20).map((notification) => (
           <NotificationCard
             key={notification.id}
             notification={notification}

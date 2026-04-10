@@ -342,6 +342,8 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
       <motion.button
         className="w-full flex items-center gap-1.5 px-1.5 py-1 bg-white/5 rounded-md hover:bg-white/10 transition-colors"
         onClick={() => setIsOpen(!isOpen)}
+        aria-label={isOpen ? "Collapse output devices list" : "Expand output devices list"}
+        aria-expanded={isOpen}
         whileTap={{ scale: 0.98 }}
       >
         <span className="text-white/80">
@@ -382,6 +384,7 @@ function DeviceSelector({ devices, currentDevice }: DeviceSelectorProps) {
                   device.isDefault ? "bg-white/5" : ""
                 }`}
                 onClick={() => setIsOpen(false)}
+                aria-label={`${device.name}${device.isDefault ? " currently default output" : ""}`}
               >
                 <span className={`flex-shrink-0 ${device.isDefault ? "text-green-400" : "text-white/70"}`}>
                   {getDeviceIcon(device.name)}
@@ -493,6 +496,7 @@ export function QuickSettings({
       <motion.button
         className="w-full flex items-center gap-2.5 px-2 py-2 bg-white/5 rounded-lg hover:bg-white/[0.08] transition-colors"
         onClick={() => { appearance.startEditing(); setView("appearance"); }}
+        aria-label="Open appearance settings"
         whileTap={{ scale: 0.98 }}
       >
         <div
@@ -528,6 +532,8 @@ export function QuickSettings({
               showMixer ? "bg-white/15 text-white/90" : "text-white/75 hover:text-white"
             }`}
             onClick={() => setShowMixer(!showMixer)}
+            aria-label={showMixer ? "Hide per-app mixer" : "Show per-app mixer"}
+            aria-expanded={showMixer}
             whileTap={{ scale: 0.95 }}
           >
             Mixer {audioSessions.length > 0 && `(${audioSessions.length})`}

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { tauriInvoke } from "../lib/tauri";
+import { useAdaptivePolling } from "./useAdaptivePolling";
 
 // =============================================================================
 // Types
@@ -32,8 +33,19 @@ export function useBattery(pollInterval = 60000): UseBatteryReturn {
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  // Adaptive polling for reduced CPU usage
+  const { activityLevel, isDeepSleep, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
+    baseInterval: pollInterval,
+    activeInterval: Math.max(10000, pollInterval / 2),
+    idleThreshold: 30000,
+    deepSleepInterval: pollInterval * 3,
+    deepSleepThreshold: 300000,
+  });
 
   const fetchBattery = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
@@ -58,30 +70,33 @@ export function useBattery(pollInterval = 60000): UseBatteryReturn {
     }
   }, []);
 
+  // Start polling function
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    // Use adaptive polling interval
+    const interval = getCurrentInterval();
+    pollIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current) fetchBattery();
+    }, interval);
+  }, [getCurrentInterval, fetchBattery]);
+
+  // Stop polling function
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
-
-    const startPolling = () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      if (isMounted) {
-        pollIntervalRef.current = setInterval(() => {
-          if (isMounted) fetchBattery();
-        }, pollInterval);
-      }
-    };
-
-    const stopPolling = () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
 
     const handleVisibilityChange = () => {
       if (!isMounted) return;
       if (document.hidden) {
         stopPolling();
       } else {
+        resetIdleTimer();
         if (isMounted) fetchBattery();
         startPolling();
       }
@@ -96,10 +111,18 @@ export function useBattery(pollInterval = 60000): UseBatteryReturn {
 
     return () => {
       isMounted = false;
+      isMountedRef.current = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [fetchBattery, pollInterval]);
+  }, [fetchBattery, startPolling, stopPolling, resetIdleTimer]);
+
+  // Restart polling when activity level or deep sleep state changes
+  useEffect(() => {
+    if (!document.hidden) {
+      startPolling();
+    }
+  }, [activityLevel, isDeepSleep, startPolling]);
 
   return {
     battery,

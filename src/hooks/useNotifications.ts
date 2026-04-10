@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { tauriInvoke } from "../lib/tauri";
+import { useAdaptivePolling } from "./useAdaptivePolling";
+import { useGracefulDegradation } from "./useGracefulDegradation";
 
 // =============================================================================
 // Types
@@ -53,15 +55,35 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
   const newNotificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const notificationPhaseRef = useRef<NotificationPhase>(notificationPhase);
   notificationPhaseRef.current = notificationPhase;
+  const isMountedRef = useRef(true);
+  const { handleError, clearError } = useGracefulDegradation({
+    maxRetries: 3,
+    retryDelay: 1500,
+  });
+
+  // Adaptive polling for reduced CPU usage (for fallback polling)
+  const { activityLevel, isDeepSleep, triggerActivity, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
+    baseInterval: pollInterval,
+    activeInterval: Math.max(5000, pollInterval / 2),
+    idleThreshold: 30000,
+    deepSleepInterval: pollInterval * 3,
+    deepSleepThreshold: 300000,
+  });
 
   // Check notification access
   const checkAccess = useCallback(async () => {
-    const result = await tauriInvoke<boolean>("check_notification_access");
-    if (result !== null) {
-      setHasAccess(result);
+    try {
+      const result = await tauriInvoke<boolean>("check_notification_access");
+      if (result !== null) {
+        setHasAccess(result);
+      }
+      clearError("notification_access");
+      return result ?? false;
+    } catch (e) {
+      handleError("notification_access", e instanceof Error ? e : "Failed to check notification access");
+      return false;
     }
-    return result ?? false;
-  }, []);
+  }, [clearError, handleError]);
 
   // Trigger notification toast animation sequence for a new notification
   const triggerNotificationAnimation = useCallback((notification: SystemNotification) => {
@@ -97,6 +119,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
   // Fetch notifications (with in-flight guard)
   const fetchNotifications = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (isPendingRef.current) return; // Skip if previous request still in-flight
 
     if (!hasAccess) {
@@ -144,13 +167,13 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
         setNotifications(mapped);
       }
-    } catch {
-      // Silently handle errors to prevent crashes
+    } catch (e) {
+      handleError("notifications_fetch", e instanceof Error ? e : "Failed to fetch notifications");
     } finally {
       isPendingRef.current = false;
       setIsLoading(false);
     }
-  }, [hasAccess, checkAccess, triggerNotificationAnimation]);
+  }, [hasAccess, checkAccess, handleError, triggerNotificationAnimation]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -159,7 +182,14 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
   // Dismiss notification
   const dismissNotification = useCallback(async (id: number) => {
-    await tauriInvoke("dismiss_notification", { id });
+    // Mark user as active
+    triggerActivity();
+    try {
+      await tauriInvoke("dismiss_notification", { id });
+      clearError("notifications_dismiss");
+    } catch (e) {
+      handleError("notifications_dismiss", e instanceof Error ? e : "Failed to dismiss notification");
+    }
     setNotifications(prev => {
       const updated = prev.filter(n => n.id !== id);
       // If all notifications cleared, return to idle
@@ -171,7 +201,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     if (latestNotification?.id === id) {
       setLatestNotification(null);
     }
-  }, [latestNotification]);
+  }, [clearError, handleError, latestNotification, triggerActivity]);
 
   // Clear latest notification (user dismissed toast early)
   const clearLatest = useCallback(() => {
@@ -193,25 +223,27 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
   const unlistenChangedRef = useRef<(() => void) | null>(null);
   const unlistenAddedRef = useRef<(() => void) | null>(null);
 
+  // Start polling function
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    // Use adaptive polling interval
+    const interval = getCurrentInterval();
+    pollIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current) fetchNotifications();
+    }, interval);
+  }, [getCurrentInterval, fetchNotifications]);
+
+  // Stop polling function
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
   // Real-time: listen for Windows notification events from backend; fallback poll as backup
   useEffect(() => {
     let isMounted = true;
-
-    const startPolling = () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      if (isMounted) {
-        pollIntervalRef.current = setInterval(() => {
-          if (isMounted) fetchNotifications();
-        }, pollInterval);
-      }
-    };
-
-    const stopPolling = () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
 
     if (isMounted) fetchNotifications();
     startPolling();
@@ -265,6 +297,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       if (document.hidden) {
         stopPolling();
       } else {
+        resetIdleTimer();
         if (isMounted) fetchNotifications();
         startPolling();
       }
@@ -276,6 +309,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
     return () => {
       isMounted = false;
+      isMountedRef.current = false;
       stopPolling();
       if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);
       if (phaseTimeoutRef.current) clearTimeout(phaseTimeoutRef.current);
@@ -286,7 +320,14 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       unlistenAddedRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [pollInterval, fetchNotifications, triggerNotificationAnimation]);
+  }, [fetchNotifications, triggerNotificationAnimation, startPolling, stopPolling, resetIdleTimer]);
+
+  // Restart polling when activity level or deep sleep state changes
+  useEffect(() => {
+    if (!document.hidden) {
+      startPolling();
+    }
+  }, [activityLevel, isDeepSleep, startPolling]);
 
   return {
     notifications,

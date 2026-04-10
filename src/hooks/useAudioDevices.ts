@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { tauriInvoke } from "../lib/tauri";
+import { useAdaptivePolling } from "./useAdaptivePolling";
+import { useGracefulDegradation } from "./useGracefulDegradation";
 
 // =============================================================================
 // Types
@@ -29,9 +31,24 @@ export function useAudioDevices(pollInterval = 5000): UseAudioDevicesReturn {
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const { handleError, clearError } = useGracefulDegradation({
+    maxRetries: 3,
+    retryDelay: 1500,
+  });
+
+  // Adaptive polling for reduced CPU usage
+  const { activityLevel, isDeepSleep, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
+    baseInterval: pollInterval,
+    activeInterval: Math.max(2000, pollInterval / 2),
+    idleThreshold: 30000,
+    deepSleepInterval: pollInterval * 3,
+    deepSleepThreshold: 300000,
+  });
 
   // Fetch devices list (with in-flight guard)
   const fetchDevices = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
@@ -54,37 +71,45 @@ export function useAudioDevices(pollInterval = 5000): UseAudioDevicesReturn {
           setDefaultDevice(def);
         }
       }
-    } catch {
-      // Silently handle errors
+      clearError("audio_devices");
+    } catch (e) {
+      handleError("audio_devices", e instanceof Error ? e : "Failed to list audio devices");
     } finally {
       isPendingRef.current = false;
       setIsLoading(false);
     }
-  }, []);
+  }, [clearError, handleError]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     await fetchDevices();
   }, [fetchDevices]);
 
+  // Start polling function
+  const startPolling = useCallback(() => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    // Use adaptive polling interval
+    const interval = getCurrentInterval();
+    pollIntervalRef.current = setInterval(() => {
+      if (isMountedRef.current) fetchDevices();
+    }, interval);
+  }, [getCurrentInterval, fetchDevices]);
+
+  // Stop polling function
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
   // Start polling when mounted
   useEffect(() => {
-    const startPolling = () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(fetchDevices, pollInterval);
-    };
-
-    const stopPolling = () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-
     const handleVisibilityChange = () => {
       if (document.hidden) {
         stopPolling();
       } else {
+        resetIdleTimer();
         fetchDevices();
         startPolling();
       }
@@ -95,10 +120,18 @@ export function useAudioDevices(pollInterval = 5000): UseAudioDevicesReturn {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      isMountedRef.current = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [fetchDevices, pollInterval]);
+  }, [fetchDevices, startPolling, stopPolling, resetIdleTimer]);
+
+  // Restart polling when activity level or deep sleep state changes
+  useEffect(() => {
+    if (!document.hidden) {
+      startPolling();
+    }
+  }, [activityLevel, isDeepSleep, startPolling]);
 
   return {
     devices,

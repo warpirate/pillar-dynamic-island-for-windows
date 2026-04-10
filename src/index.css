@@ -41,3 +41,102 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* =============================================================================
+   GPU Layer Promotion for Animation Performance
+   These classes promote elements to GPU layers to reduce repaints
+   and improve animation performance. Use sparingly - only on elements
+   that are actively animating.
+   ============================================================================= */
+
+.gpu-layer-promote {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.gpu-layer-promote-transform {
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.gpu-layer-promote-opacity {
+  will-change: opacity;
+}
+
+/* Hardware acceleration for animated containers */
+.gpu-accelerated {
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+/* Reduce paint complexity for pill container */
+.pill-container {
+  contain: layout style paint;
+}
+
+/* Optimize for sub-pixel rendering */
+.subpixel-optimized {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* =============================================================================
+   Accessibility - Screen Reader Support
+   These classes provide screen reader-only content and keyboard navigation support.
+   ============================================================================= */
+
+/* Screen reader only content - visually hidden but accessible to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Focus visible for keyboard navigation */
+*:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.8);
+  outline-offset: 2px;
+}
+
+/* Skip to main content link for keyboard users */
+.skip-to-content {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 16px;
+  z-index: 100;
+  transition: top 0.3s;
+}
+
+.skip-to-content:focus {
+  top: 0;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  * {
+    border: 1px solid currentColor;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

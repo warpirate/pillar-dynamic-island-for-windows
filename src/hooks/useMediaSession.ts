@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { tauriInvoke } from "../lib/tauri";
+import { useAdaptivePolling } from "./useAdaptivePolling";
+import { useGracefulDegradation } from "./useGracefulDegradation";
 
 // =============================================================================
 // Types
@@ -77,6 +79,19 @@ export function useMediaSession(
   const isPendingRef = useRef(false);
   const onMediaChangeRef = useRef(onMediaChange);
   onMediaChangeRef.current = onMediaChange;
+  const { handleError, clearError } = useGracefulDegradation({
+    maxRetries: 3,
+    retryDelay: 1500,
+  });
+  
+  // Adaptive polling for reduced CPU usage
+  const { isDeepSleep, triggerActivity, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
+    baseInterval: pollInterval,
+    activeInterval: Math.max(500, pollInterval / 3),
+    idleThreshold: 30000,
+    deepSleepInterval: pollInterval * 4,
+    deepSleepThreshold: 300000,
+  });
 
   // Fetch media session info (with in-flight guard to prevent overlapping requests)
   const fetchMedia = useCallback(async () => {
@@ -130,6 +145,7 @@ export function useMediaSession(
         setPlaybackInfo(null);
       }
     } catch (e) {
+      handleError("media_session", e instanceof Error ? e : "Media session fetch failed");
       setError(e instanceof Error ? e.message : "Failed to get media session");
     } finally {
       isPendingRef.current = false;
@@ -144,44 +160,89 @@ export function useMediaSession(
 
   // Media controls
   const playPause = useCallback(async () => {
-    await tauriInvoke("media_play_pause");
+    try {
+      await tauriInvoke("media_play_pause");
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to toggle play/pause");
+    }
     setTimeout(fetchMedia, 100);
-  }, [fetchMedia]);
+    triggerActivity(); // Mark user as active
+  }, [clearError, fetchMedia, handleError, triggerActivity]);
 
   const next = useCallback(async () => {
-    await tauriInvoke("media_next");
+    try {
+      await tauriInvoke("media_next");
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to skip next");
+    }
     setTimeout(fetchMedia, 100);
-  }, [fetchMedia]);
+    triggerActivity(); // Mark user as active
+  }, [clearError, fetchMedia, handleError, triggerActivity]);
 
   const previous = useCallback(async () => {
-    await tauriInvoke("media_previous");
+    try {
+      await tauriInvoke("media_previous");
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to go previous");
+    }
     setTimeout(fetchMedia, 100);
-  }, [fetchMedia]);
+    triggerActivity(); // Mark user as active
+  }, [clearError, fetchMedia, handleError, triggerActivity]);
 
   const toggleRepeat = useCallback(async () => {
-    await tauriInvoke("media_toggle_repeat");
+    try {
+      await tauriInvoke("media_toggle_repeat");
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to toggle repeat");
+    }
     setTimeout(fetchMedia, 100);
-  }, [fetchMedia]);
+    triggerActivity(); // Mark user as active
+  }, [clearError, fetchMedia, handleError, triggerActivity]);
 
   const toggleShuffle = useCallback(async () => {
-    await tauriInvoke("media_toggle_shuffle");
+    try {
+      await tauriInvoke("media_toggle_shuffle");
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to toggle shuffle");
+    }
     setTimeout(fetchMedia, 100);
-  }, [fetchMedia]);
+    triggerActivity(); // Mark user as active
+  }, [clearError, fetchMedia, handleError, triggerActivity]);
 
   const seekTo = useCallback(async (positionMs: number) => {
-    await tauriInvoke("seek_media", { positionMs: Math.round(positionMs) });
+    try {
+      await tauriInvoke("seek_media", { positionMs: Math.round(positionMs) });
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to seek media");
+    }
     setTimeout(fetchMedia, 150);
-  }, [fetchMedia]);
+    triggerActivity(); // Mark user as active
+  }, [clearError, fetchMedia, handleError, triggerActivity]);
 
   const pauseOtherSessions = useCallback(async () => {
-    await tauriInvoke("pause_other_sessions");
-  }, []);
+    try {
+      await tauriInvoke("pause_other_sessions");
+      clearError("media_controls");
+    } catch (e) {
+      handleError("media_controls", e instanceof Error ? e : "Failed to pause other sessions");
+    }
+    triggerActivity(); // Mark user as active
+  }, [clearError, handleError, triggerActivity]);
 
   // Start polling when mounted
   useEffect(() => {
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = setInterval(fetchMedia, pollInterval);
+      if (!isDeepSleep) {
+        const interval = getCurrentInterval();
+        pollIntervalRef.current = setInterval(fetchMedia, interval);
+      }
     };
 
     const stopPolling = () => {
@@ -196,6 +257,7 @@ export function useMediaSession(
         stopPolling();
       } else {
         fetchMedia();
+        resetIdleTimer(); // Reset idle timer when becoming visible
         startPolling();
       }
     };
@@ -208,7 +270,7 @@ export function useMediaSession(
       stopPolling();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [fetchMedia, pollInterval]);
+  }, [fetchMedia, getCurrentInterval, isDeepSleep, resetIdleTimer]);
 
   return {
     media,

@@ -61,6 +61,7 @@ export function AppearanceModule({ settings, animationSpeed = 1.0, onAnimationSp
                 onMouseEnter={() => setHoveredMode(m)}
                 onMouseLeave={() => setHoveredMode(null)}
                 onClick={() => onUpdate({ mode: m })}
+                aria-label={`Switch pill style to ${m}`}
                 whileTap={{ scale: 0.97 }}
               >
                 <div
@@ -178,6 +179,7 @@ export function AppearanceModule({ settings, animationSpeed = 1.0, onAnimationSp
                     : "bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/60"
                 }`}
                 onClick={() => onAnimationSpeedChange(preset.value)}
+                aria-label={`Set animation speed to ${preset.label}`}
                 whileTap={{ scale: 0.95 }}
               >
                 {preset.label}
@@ -198,6 +200,8 @@ export function AppearanceModule({ settings, animationSpeed = 1.0, onAnimationSp
             settings.useAlbumAccent ? "bg-white/30" : "bg-white/10"
           }`}
           onClick={() => onUpdate({ useAlbumAccent: !settings.useAlbumAccent })}
+          aria-label={settings.useAlbumAccent ? "Disable album art accent" : "Enable album art accent"}
+          aria-pressed={settings.useAlbumAccent}
           whileTap={{ scale: 0.95 }}
         >
           <motion.div
@@ -216,6 +220,7 @@ export function AppearanceModule({ settings, animationSpeed = 1.0, onAnimationSp
         <motion.button
           className="flex-1 py-1.5 rounded-md bg-white/5 text-white/50 text-[11px] font-medium hover:bg-white/10 hover:text-white/70 transition-colors"
           onClick={onReset}
+          aria-label="Reset appearance settings to default"
           {...microInteractions.button}
         >
           Reset to Default
@@ -223,6 +228,7 @@ export function AppearanceModule({ settings, animationSpeed = 1.0, onAnimationSp
         <motion.button
           className="flex-1 py-1.5 rounded-md bg-white/15 text-white/90 text-[11px] font-medium hover:bg-white/20 transition-colors"
           onClick={onSave}
+          aria-label="Save appearance settings"
           {...microInteractions.button}
         >
           Save

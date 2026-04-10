@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import type { MediaInfo, MediaTimeline, MediaPlaybackInfo } from "../../../hooks/useMediaSession";
-import { microInteractions } from "../animations";
+import { microInteractions, gpuLayerHints } from "../animations";
 
 // =============================================================================
 // Media Playing Indicator (animated bars for idle/hover)
@@ -13,7 +13,7 @@ interface MediaIndicatorProps {
 
 export function MediaIndicator({ isPlaying }: MediaIndicatorProps) {
   return (
-    <div className="flex items-end gap-0.5 h-3 ml-1">
+    <div className="flex items-end gap-0.5 h-3 ml-1" style={gpuLayerHints.transform}>
       {[0, 1, 2].map(i => (
         <motion.div
           key={i}
@@ -29,6 +29,7 @@ export function MediaIndicator({ isPlaying }: MediaIndicatorProps) {
             delay: i * 0.15,
             ease: "easeInOut",
           }}
+          style={gpuLayerHints.transform}
         />
       ))}
     </div>
@@ -62,11 +63,26 @@ export function MediaCompact({ media, onPlayPause }: MediaCompactProps) {
 // Seekbar Component
 // =============================================================================
 
+// Cache for formatted times to avoid repeated calculations
+const timeCache = new Map<number, string>();
+const MAX_TIME_CACHE_SIZE = 100;
+
 function formatTime(ms: number): string {
+  const cached = timeCache.get(ms);
+  if (cached) return cached;
+  
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  const result = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  
+  // Limit cache size
+  if (timeCache.size > MAX_TIME_CACHE_SIZE) {
+    timeCache.clear();
+  }
+  timeCache.set(ms, result);
+  
+  return result;
 }
 
 interface SeekBarProps {
@@ -127,6 +143,7 @@ function SeekBar({ timeline, accentColor, onSeek }: SeekBarProps) {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        style={gpuLayerHints.transform}
       >
         <div
           className="absolute left-0 top-0 h-full rounded-full transition-[width] duration-100"
@@ -187,18 +204,35 @@ function ShuffleIcon() {
 // Media Expanded View (full controls)
 // =============================================================================
 
+// Cache for source labels to avoid repeated string operations
+const sourceLabelCache = new Map<string, string | null>();
+const MAX_SOURCE_CACHE_SIZE = 50;
+
 /** Derive a short source label from raw app/source ID to avoid wrapping long strings */
 function getSourceLabel(appName: string | undefined): string | null {
   if (!appName?.trim()) return null;
+  
+  const cached = sourceLabelCache.get(appName);
+  if (cached !== undefined) return cached;
+  
   const lower = appName.toLowerCase();
-  if (lower.includes("youtube")) return "YouTube";
-  if (lower.includes("spotify")) return "Spotify";
-  if (lower.includes("chrome")) return "Chrome";
-  if (lower.includes("firefox")) return "Firefox";
-  if (lower.includes("edge")) return "Edge";
-  if (lower.includes("vlc")) return "VLC";
-  // Fallback: show first 18 chars + ellipsis so it stays one line
-  return appName.length > 18 ? `${appName.slice(0, 18)}…` : appName;
+  let result: string | null;
+  
+  if (lower.includes("youtube")) result = "YouTube";
+  else if (lower.includes("spotify")) result = "Spotify";
+  else if (lower.includes("chrome")) result = "Chrome";
+  else if (lower.includes("firefox")) result = "Firefox";
+  else if (lower.includes("edge")) result = "Edge";
+  else if (lower.includes("vlc")) result = "VLC";
+  else result = appName.length > 18 ? `${appName.slice(0, 18)}…` : appName;
+  
+  // Limit cache size
+  if (sourceLabelCache.size > MAX_SOURCE_CACHE_SIZE) {
+    sourceLabelCache.clear();
+  }
+  sourceLabelCache.set(appName, result);
+  
+  return result;
 }
 
 interface MediaExpandedProps {
@@ -226,6 +260,12 @@ export function MediaExpanded({
   onToggleShuffle,
   onSeek,
 }: MediaExpandedProps) {
+  // Memoize source label to avoid recalculation
+  const sourceLabel = useMemo(() => {
+    if (!media) return null;
+    return getSourceLabel(media.appName);
+  }, [media?.appName]);
+
   if (!media) {
     return (
       <div className="flex flex-col items-center justify-center gap-2 py-4">
@@ -239,8 +279,6 @@ export function MediaExpanded({
       </div>
     );
   }
-
-  const sourceLabel = getSourceLabel(media.appName);
 
   return (
     <div className="flex flex-col gap-3 py-1">

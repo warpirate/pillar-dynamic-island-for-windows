@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { tauriInvoke } from "../lib/tauri";
+import { useAdaptivePolling } from "./useAdaptivePolling";
 
 // =============================================================================
 // Types
@@ -25,9 +26,18 @@ interface UseVolumeReturn {
 export function useVolume(pollInterval = 5000): UseVolumeReturn {
   const [volume, setVolumeState] = useState<VolumeInfo>({ level: 50, isMuted: false });
   const [isLoading, setIsLoading] = useState(false);
-
+  
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
+  
+  // Adaptive polling for reduced CPU usage
+  const { isDeepSleep, triggerActivity, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
+    baseInterval: pollInterval,
+    activeInterval: Math.max(1000, pollInterval / 2),
+    idleThreshold: 30000,
+    deepSleepInterval: pollInterval * 3,
+    deepSleepThreshold: 300000,
+  });
 
   // Fetch volume info (with in-flight guard)
   const fetchVolume = useCallback(async () => {
@@ -59,7 +69,8 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
     const clampedLevel = Math.max(0, Math.min(100, Math.round(level)));
     await tauriInvoke("set_system_volume", { level: clampedLevel });
     setVolumeState(prev => ({ ...prev, level: clampedLevel }));
-  }, []);
+    triggerActivity(); // Mark user as active
+  }, [triggerActivity]);
 
   // Toggle mute
   const toggleMute = useCallback(async () => {
@@ -67,7 +78,8 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
     if (newMuted !== null) {
       setVolumeState(prev => ({ ...prev, isMuted: newMuted }));
     }
-  }, []);
+    triggerActivity(); // Mark user as active
+  }, [triggerActivity]);
 
   // Start polling when mounted
   useEffect(() => {
@@ -75,10 +87,11 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
     
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      if (isMounted) {
+      if (isMounted && !isDeepSleep) {
+        const interval = getCurrentInterval();
         pollIntervalRef.current = setInterval(() => {
           if (isMounted) fetchVolume();
-        }, pollInterval);
+        }, interval);
       }
     };
 
@@ -95,8 +108,11 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
       if (document.hidden) {
         stopPolling();
       } else {
-        if (isMounted) fetchVolume();
-        startPolling();
+        if (isMounted) {
+          fetchVolume();
+          resetIdleTimer(); // Reset idle timer when becoming visible
+          startPolling();
+        }
       }
     };
 
@@ -112,7 +128,7 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [fetchVolume, pollInterval]);
+  }, [fetchVolume, getCurrentInterval, isDeepSleep, resetIdleTimer]);
 
   return {
     volume,

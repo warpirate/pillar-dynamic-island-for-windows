@@ -2,11 +2,20 @@ import { useEffect, useState, useRef } from "react";
 import { motion } from "motion/react";
 import { Pill } from "./components/Pill/Pill";
 import { isTauriAvailable, tauriInvoke } from "./lib/tauri";
+import { useScreenReader, ScreenReaderLiveRegions } from "./hooks/useScreenReader";
 
 function App() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const fullscreenCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastFullscreenState = useRef(false);
+  
+  // Screen reader support
+  const { politeAnnouncement, assertiveAnnouncement } = useScreenReader({
+    defaultPriority: "polite",
+    announcementDelay: 100,
+    deduplicate: true,
+    deduplicationWindow: 5000,
+  });
 
   // Position window on mount and handle display changes
   useEffect(() => {
@@ -98,14 +107,22 @@ function App() {
   }, []);
 
   return (
-    <motion.div
-      className="w-full h-screen flex items-start justify-center pt-0"
-      style={{ minHeight: "100vh", overflow: "visible" }}
-      animate={{ y: isFullscreen ? -280 : 0 }}
-      transition={{ type: "spring", stiffness: 320, damping: 30 }}
-    >
-      <Pill />
-    </motion.div>
+    <>
+      {/* Screen reader live regions for announcements */}
+      <ScreenReaderLiveRegions
+        polite={politeAnnouncement}
+        assertive={assertiveAnnouncement}
+      />
+      
+      <motion.div
+        className="w-full h-screen flex items-start justify-center pt-0"
+        style={{ minHeight: "100vh", overflow: "visible" }}
+        animate={{ y: isFullscreen ? -280 : 0 }}
+        transition={{ type: "spring", stiffness: 320, damping: 30 }}
+      >
+        <Pill />
+      </motion.div>
+    </>
   );
 }
 
