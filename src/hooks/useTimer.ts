@@ -15,15 +15,38 @@ export interface TimerState {
   isComplete: boolean;
 }
 
+export interface TimerStats {
+  sessionsCompleted: number;
+  totalFocusSeconds: number;
+  lastCompletedAt: number | null;
+  byCategory: Record<string, { sessions: number; focusSeconds: number }>;
+}
+
+export interface TimerCategory {
+  id: string;
+  label: string;
+}
+
+const TIMER_CATEGORIES: TimerCategory[] = [
+  { id: "focus", label: "Focus" },
+  { id: "study", label: "Study" },
+  { id: "work", label: "Work" },
+  { id: "personal", label: "Personal" },
+];
+
 interface UseTimerReturn {
   timer: TimerState;
   presets: TimerPreset[];
   startTimer: (preset: TimerPreset | { label: string; minutes: number }) => void;
   startCustomTimer: (label: string, minutes: number) => void;
+  categories: TimerCategory[];
+  selectedCategory: string;
+  setSelectedCategory: (categoryId: string) => void;
   pauseTimer: () => void;
   resumeTimer: () => void;
   stopTimer: () => void;
   dismissAlert: () => void;
+  stats: TimerStats;
   formatTime: (seconds: number) => string;
   progress: number; // 0-1, for progress ring
 }
@@ -36,6 +59,8 @@ export function useTimer(
   onTimerUpdate?: (timer: TimerState) => void,
   onTimerComplete?: (label: string) => void
 ): UseTimerReturn {
+  const TIMER_STATS_KEY = "pillar_timer_stats_v1";
+  const TIMER_CATEGORY_KEY = "pillar_timer_category_v1";
   const [timer, setTimer] = useState<TimerState>({
     isActive: false,
     isPaused: false,
@@ -43,6 +68,33 @@ export function useTimer(
     totalSeconds: 0,
     remainingSeconds: 0,
     isComplete: false,
+  });
+  const [stats, setStats] = useState<TimerStats>(() => {
+    try {
+      const raw = localStorage.getItem(TIMER_STATS_KEY);
+      if (raw) {
+        return JSON.parse(raw) as TimerStats;
+      }
+    } catch {
+      // ignore parse/storage error
+    }
+    return {
+      sessionsCompleted: 0,
+      totalFocusSeconds: 0,
+      lastCompletedAt: null,
+      byCategory: {},
+    };
+  });
+  const [selectedCategory, setSelectedCategoryState] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem(TIMER_CATEGORY_KEY);
+      if (raw && TIMER_CATEGORIES.some((c) => c.id === raw)) {
+        return raw;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return TIMER_CATEGORIES[0].id;
   });
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -68,6 +120,27 @@ export function useTimer(
       onTimerUpdateRef.current(timer);
     }
   }, [timer]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TIMER_STATS_KEY, JSON.stringify(stats));
+    } catch {
+      // ignore storage errors
+    }
+  }, [stats]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TIMER_CATEGORY_KEY, selectedCategory);
+    } catch {
+      // ignore storage errors
+    }
+  }, [selectedCategory]);
+
+  const setSelectedCategory = useCallback((categoryId: string) => {
+    if (!TIMER_CATEGORIES.some((c) => c.id === categoryId)) return;
+    setSelectedCategoryState(categoryId);
+  }, []);
 
   const clearTimerInterval = useCallback(() => {
     if (intervalRef.current) {
@@ -100,6 +173,18 @@ export function useTimer(
         
         if (newRemaining <= 0) {
           clearTimerInterval();
+          setStats((prevStats) => ({
+            sessionsCompleted: prevStats.sessionsCompleted + 1,
+            totalFocusSeconds: prevStats.totalFocusSeconds + prev.totalSeconds,
+            lastCompletedAt: Date.now(),
+            byCategory: {
+              ...prevStats.byCategory,
+              [selectedCategory]: {
+                sessions: (prevStats.byCategory[selectedCategory]?.sessions ?? 0) + 1,
+                focusSeconds: (prevStats.byCategory[selectedCategory]?.focusSeconds ?? 0) + prev.totalSeconds,
+              },
+            },
+          }));
           if (onTimerCompleteRef.current) {
             onTimerCompleteRef.current(prev.label);
           }
@@ -117,7 +202,7 @@ export function useTimer(
         };
       });
     }, 1000);
-  }, [clearTimerInterval]);
+  }, [clearTimerInterval, selectedCategory]);
 
   const startCustomTimer = useCallback((label: string, minutes: number) => {
     startTimer({ label, minutes });
@@ -162,10 +247,14 @@ export function useTimer(
     presets: TIMER_PRESETS,
     startTimer,
     startCustomTimer,
+    categories: TIMER_CATEGORIES,
+    selectedCategory,
+    setSelectedCategory,
     pauseTimer,
     resumeTimer,
     stopTimer,
     dismissAlert,
+    stats,
     formatTime,
     progress,
   };

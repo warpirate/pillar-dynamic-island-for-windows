@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState } from "react";
 import type { SystemNotification } from "../../../hooks/useNotifications";
 import { notificationAnimations, microInteractions, PILL_DURATION_FAST, gpuLayerHints } from "../animations";
 
@@ -358,7 +358,7 @@ function ToastCard({
 
 interface NotificationCardProps {
   notification: SystemNotification;
-  onDismiss: (id: number) => void;
+  onDismiss: (id: number) => void | Promise<void>;
   onActivate?: (id: number) => void;
 }
 
@@ -465,11 +465,14 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
 interface NotificationsListProps {
   notifications: SystemNotification[];
   hasAccess: boolean;
-  onDismiss: (id: number) => void;
+  onDismiss: (id: number) => void | Promise<void>;
   onActivate?: (id: number) => void;
 }
 
 export function NotificationsList({ notifications, hasAccess, onDismiss, onActivate }: NotificationsListProps) {
+  const [expandedApps, setExpandedApps] = useState<Record<string, boolean>>({});
+  const [actionMode, setActionMode] = useState<"normal" | "cleanup">("normal");
+
   if (!hasAccess) {
     return (
       <div className="flex flex-col items-center justify-center py-4 text-center">
@@ -494,18 +497,103 @@ export function NotificationsList({ notifications, hasAccess, onDismiss, onActiv
     );
   }
 
+  const groupedNotifications = notifications.reduce<Record<string, SystemNotification[]>>((acc, notification) => {
+    if (!acc[notification.appName]) {
+      acc[notification.appName] = [];
+    }
+    acc[notification.appName].push(notification);
+    return acc;
+  }, {});
+
+  const groupedList = Object.entries(groupedNotifications).sort((a, b) => b[1].length - a[1].length);
+
+  const toggleGroup = (appName: string) => {
+    setExpandedApps((prev) => ({
+      ...prev,
+      [appName]: !(prev[appName] ?? true),
+    }));
+  };
+
+  const clearGroup = (appName: string) => {
+    const target = groupedNotifications[appName]?.slice(0, 20) ?? [];
+    void Promise.allSettled(target.map((n) => Promise.resolve(onDismiss(n.id))));
+  };
+
+  const clearOldInGroup = (appName: string) => {
+    const now = Date.now();
+    const tenMinutes = 10 * 60 * 1000;
+    const target = (groupedNotifications[appName] ?? [])
+      .filter((n) => now - n.timestamp > tenMinutes)
+      .slice(0, 15);
+    void Promise.allSettled(target.map((n) => Promise.resolve(onDismiss(n.id))));
+  };
+
   return (
     <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-0.5">
-      <AnimatePresence mode="popLayout">
-        {notifications.slice(0, 20).map((notification) => (
-          <NotificationCard
-            key={notification.id}
-            notification={notification}
-            onDismiss={onDismiss}
-            onActivate={onActivate}
-          />
-        ))}
-      </AnimatePresence>
+      <div className="flex items-center justify-end mb-1">
+        <button
+          type="button"
+          className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+            actionMode === "cleanup"
+              ? "bg-white/20 text-white"
+              : "bg-white/10 text-white/70 hover:text-white hover:bg-white/15"
+          }`}
+          aria-label={actionMode === "cleanup" ? "Switch to normal actions" : "Switch to cleanup actions"}
+          aria-pressed={actionMode === "cleanup"}
+          onClick={() => setActionMode((prev) => (prev === "cleanup" ? "normal" : "cleanup"))}
+        >
+          {actionMode === "cleanup" ? "Cleanup mode" : "Normal mode"}
+        </button>
+      </div>
+      {groupedList.map(([appName, appNotifications]) => {
+        const isExpanded = expandedApps[appName] ?? true;
+        return (
+          <div key={appName} className="rounded-md bg-white/[0.03] border border-white/5">
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <button
+                type="button"
+                className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${appName} notifications`}
+                aria-expanded={isExpanded}
+                onClick={() => toggleGroup(appName)}
+              >
+                <span className={`w-2 h-2 rounded-full ${getAppColorSolid(appName)}`} />
+                <span className="text-white/90 text-[12px] truncate">{appName}</span>
+                <span className="text-white/50 text-[11px]">{appNotifications.length}</span>
+              </button>
+              <button
+                type="button"
+                className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70 hover:text-white hover:bg-white/15"
+                aria-label={
+                  actionMode === "cleanup"
+                    ? `Clear old notifications from ${appName}`
+                    : `Clear all notifications from ${appName}`
+                }
+                onClick={() => {
+                  if (actionMode === "cleanup") {
+                    clearOldInGroup(appName);
+                  } else {
+                    clearGroup(appName);
+                  }
+                }}
+              >
+                {actionMode === "cleanup" ? "Clear old" : "Clear"}
+              </button>
+            </div>
+            <AnimatePresence mode="popLayout">
+              {isExpanded &&
+                appNotifications.slice(0, 10).map((notification) => (
+                  <NotificationCard
+                    key={notification.id}
+                    notification={notification}
+                    onDismiss={onDismiss}
+                    onActivate={onActivate}
+                  />
+                ))}
+            </AnimatePresence>
+          </div>
+        );
+      })}
     </div>
   );
 }

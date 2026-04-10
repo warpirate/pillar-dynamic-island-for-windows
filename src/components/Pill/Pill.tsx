@@ -82,6 +82,10 @@ export function Pill() {
   // Timer hook
   const {
     timer,
+    stats: timerStats,
+    categories: timerCategories,
+    selectedCategory: selectedTimerCategory,
+    setSelectedCategory: setSelectedTimerCategory,
     presets,
     startTimer,
     pauseTimer,
@@ -120,6 +124,7 @@ export function Pill() {
   // Media session hook
   const {
     media,
+    recentSources,
     timeline,
     playbackInfo,
     playPause,
@@ -128,6 +133,7 @@ export function Pill() {
     toggleRepeat,
     toggleShuffle,
     seekTo,
+    pauseOtherSessions,
   } = useMediaSession(1500); // Poll every 1.5s (reduced from 600ms to avoid saturating backend)
 
   // Volume hook
@@ -165,12 +171,14 @@ export function Pill() {
   // Notifications hook
   const {
     notifications,
+    history: notificationHistory,
     hasAccess: hasNotificationAccess,
     latestNotification,
     notificationPhase,
     isNewNotification,
     dismissNotification,
     clearLatest: clearLatestNotification,
+    clearHistory: clearNotificationHistory,
   } = useNotifications(); // Real-time via Windows NotificationChanged event; fallback poll every 30s
 
   // Battery hook
@@ -254,6 +262,7 @@ export function Pill() {
   const pillToggleRef = useRef<HTMLDivElement>(null);
   const [bootPhase, setBootPhase] = useState<"dot" | "morph" | "complete">("dot");
   const [activeTab, setActiveTab] = useState<ExpandedTab>("timer");
+  const [notificationsView, setNotificationsView] = useState<"live" | "history">("live");
   const [time, setTime] = useState(getTimeString);
   const [dateStr, setDateStr] = useState(getDateString);
   const [seconds, setSeconds] = useState(getSecondsString);
@@ -1055,6 +1064,10 @@ export function Pill() {
                   >
                     <TimerExpanded
                       timer={timer}
+                      stats={timerStats}
+                      categories={timerCategories}
+                      selectedCategory={selectedTimerCategory}
+                      onSelectCategory={setSelectedTimerCategory}
                       presets={presets}
                       formatTime={formatTime}
                       progress={timerProgress}
@@ -1081,6 +1094,7 @@ export function Pill() {
                   >
                     <MediaExpanded
                       media={media}
+                      recentSources={recentSources}
                       timeline={timeline}
                       playbackInfo={playbackInfo}
                       accentColor={effectiveAccentColor}
@@ -1089,6 +1103,7 @@ export function Pill() {
                       onPrevious={mediaPrevious}
                       onToggleRepeat={toggleRepeat}
                       onToggleShuffle={toggleShuffle}
+                      onPauseOthers={pauseOtherSessions}
                       onSeek={seekTo}
                     />
                   </motion.div>
@@ -1109,23 +1124,49 @@ export function Pill() {
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <h2 className="text-white/90 text-[13px] font-medium uppercase tracking-wider">
-                          Recent Notifications
+                          {notificationsView === "live" ? "Recent Notifications" : "Notification History"}
                         </h2>
-                        {notifications.length > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <div className="rounded bg-white/10 p-[2px] flex items-center">
+                            <button
+                              type="button"
+                              className={`px-1.5 py-0.5 text-[10px] rounded ${notificationsView === "live" ? "bg-white/20 text-white" : "text-white/70"}`}
+                              aria-label="Show live notifications"
+                              aria-pressed={notificationsView === "live"}
+                              onClick={() => setNotificationsView("live")}
+                            >
+                              Live
+                            </button>
+                            <button
+                              type="button"
+                              className={`px-1.5 py-0.5 text-[10px] rounded ${notificationsView === "history" ? "bg-white/20 text-white" : "text-white/70"}`}
+                              aria-label="Show notification history"
+                              aria-pressed={notificationsView === "history"}
+                              onClick={() => setNotificationsView("history")}
+                            >
+                              History
+                            </button>
+                          </div>
+                          {(notificationsView === "live" ? notifications.length : notificationHistory.length) > 0 && (
                           <motion.button
                             type="button"
                             className="px-2 py-0.5 rounded text-[10px] bg-white/10 text-white/70 hover:text-white/90 hover:bg-white/15 transition-colors"
                             onClick={() => {
-                              notifications.forEach((n) => dismissNotification(n.id));
+                              if (notificationsView === "live") {
+                                notifications.slice(0, 30).forEach((n) => dismissNotification(n.id));
+                              } else {
+                                clearNotificationHistory();
+                              }
                             }}
                             {...microInteractions.button}
                           >
-                            Clear all
+                            {notificationsView === "live" ? "Clear all" : "Clear history"}
                           </motion.button>
                         )}
+                        </div>
                       </div>
                       <NotificationsList
-                        notifications={notifications}
+                        notifications={notificationsView === "live" ? notifications : notificationHistory}
                         hasAccess={hasNotificationAccess}
                         onDismiss={dismissNotification}
                         onActivate={async (id) => {

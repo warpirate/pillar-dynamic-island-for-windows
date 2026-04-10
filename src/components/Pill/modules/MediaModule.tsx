@@ -237,6 +237,7 @@ function getSourceLabel(appName: string | undefined): string | null {
 
 interface MediaExpandedProps {
   media: MediaInfo | null;
+  recentSources?: string[];
   timeline?: MediaTimeline | null;
   playbackInfo?: MediaPlaybackInfo | null;
   accentColor?: string;
@@ -245,11 +246,13 @@ interface MediaExpandedProps {
   onPrevious: () => void;
   onToggleRepeat?: () => void;
   onToggleShuffle?: () => void;
+  onPauseOthers?: () => void;
   onSeek?: (positionMs: number) => void;
 }
 
 export function MediaExpanded({
   media,
+  recentSources = [],
   timeline,
   playbackInfo,
   accentColor,
@@ -258,6 +261,7 @@ export function MediaExpanded({
   onPrevious,
   onToggleRepeat,
   onToggleShuffle,
+  onPauseOthers,
   onSeek,
 }: MediaExpandedProps) {
   // Memoize source label to avoid recalculation
@@ -430,6 +434,38 @@ export function MediaExpanded({
           </motion.button>
         )}
       </div>
+
+      {(recentSources.length > 0 || onPauseOthers) && (
+        <div className="flex flex-col gap-1.5 mt-1">
+          {onPauseOthers && (
+            <button
+              type="button"
+              className="self-center px-2 py-1 rounded text-[10px] bg-white/10 text-white/75 hover:text-white hover:bg-white/15 transition-colors"
+              aria-label="Pause audio in other apps"
+              onClick={onPauseOthers}
+            >
+              Pause other sessions
+            </button>
+          )}
+          {recentSources.length > 0 && (
+            <div className="flex flex-wrap gap-1 justify-center">
+              {recentSources.slice(0, 5).map((source) => (
+                <span
+                  key={source}
+                  className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                    source === media?.appName
+                      ? "bg-white/15 text-white border-white/20"
+                      : "bg-white/5 text-white/60 border-white/10"
+                  }`}
+                  aria-label={`Recent media source ${source}`}
+                >
+                  {source}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

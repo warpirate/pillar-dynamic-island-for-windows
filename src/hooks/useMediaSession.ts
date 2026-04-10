@@ -28,6 +28,7 @@ export interface MediaPlaybackInfo {
 
 interface UseMediaSessionReturn {
   media: MediaInfo | null;
+  recentSources: string[];
   timeline: MediaTimeline | null;
   playbackInfo: MediaPlaybackInfo | null;
   isLoading: boolean;
@@ -70,6 +71,7 @@ export function useMediaSession(
   onMediaChange?: (media: MediaInfo | null) => void
 ): UseMediaSessionReturn {
   const [media, setMedia] = useState<MediaInfo | null>(null);
+  const [recentSources, setRecentSources] = useState<string[]>([]);
   const [timeline, setTimeline] = useState<MediaTimeline | null>(null);
   const [playbackInfo, setPlaybackInfo] = useState<MediaPlaybackInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -113,6 +115,12 @@ export function useMediaSession(
 
       setMedia(transformed);
       setError(null);
+      if (transformed?.appName) {
+        setRecentSources((prev) => {
+          const deduped = [transformed.appName!, ...prev.filter((s) => s !== transformed.appName)];
+          return deduped.slice(0, 5);
+        });
+      }
 
       if (onMediaChangeRef.current) {
         onMediaChangeRef.current(transformed);
@@ -274,6 +282,7 @@ export function useMediaSession(
 
   return {
     media,
+    recentSources,
     timeline,
     playbackInfo,
     isLoading,

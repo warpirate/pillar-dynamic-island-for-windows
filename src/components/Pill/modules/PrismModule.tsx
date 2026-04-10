@@ -46,6 +46,9 @@ export function PrismModule({
       <div className="flex items-center justify-between gap-2 mb-1.5 flex-shrink-0">
         <span className="text-white/80 text-[11px] uppercase tracking-wider">Prism AI</span>
         <div className="flex items-center gap-1">
+          <span className="text-[9px] text-white/45 px-1 py-0.5 rounded bg-white/10">
+            actions {actionMode ? "filtered" : "off"}
+          </span>
           <motion.button
             className={`px-1.5 py-0.5 rounded text-[9px] ${
               actionMode ? "bg-green-500/25 text-green-300" : "bg-white/10 text-white/60"

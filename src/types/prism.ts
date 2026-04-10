@@ -24,6 +24,7 @@ export interface PrismAction {
   label?: string;
   description?: string;
   args?: Record<string, unknown>;
+  confidence?: number; // 0-1 confidence score from model/parser
 }
 
 export interface PrismChatRequest {

@@ -22,6 +22,10 @@ interface UsePrismAIReturn {
   sendMessage: (message: string) => Promise<void>;
 }
 
+const PRISM_MESSAGES_KEY = "pillar_prism_messages_v1";
+const PRISM_ACTION_MODE_KEY = "pillar_prism_action_mode_v1";
+const MIN_ACTION_CONFIDENCE = 0.6;
+
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return value.slice(0, maxChars);
@@ -40,10 +44,51 @@ function trimMessages(messages: PrismChatMessage[]): PrismChatMessage[] {
   return messages.slice(-MAX_CHAT_MESSAGES);
 }
 
+function parseConfidence(action: {
+  description?: string;
+  args?: Record<string, unknown>;
+  confidence?: number;
+}): number {
+  if (typeof action.confidence === "number") {
+    return Math.max(0, Math.min(1, action.confidence));
+  }
+  if (typeof action.args?.confidence === "number") {
+    return Math.max(0, Math.min(1, action.args.confidence as number));
+  }
+  if (typeof action.args?.confidence === "string") {
+    const parsed = Number(action.args.confidence);
+    if (Number.isFinite(parsed)) return Math.max(0, Math.min(1, parsed));
+  }
+  if (typeof action.description === "string") {
+    const match = action.description.match(/confidence[:\s]+(0(?:\.\d+)?|1(?:\.0+)?)/i);
+    if (match) {
+      const parsed = Number(match[1]);
+      if (Number.isFinite(parsed)) return Math.max(0, Math.min(1, parsed));
+    }
+  }
+  return 0.5;
+}
+
 export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
-  const [messages, setMessages] = useState<PrismChatMessage[]>([]);
+  const [messages, setMessages] = useState<PrismChatMessage[]>(() => {
+    try {
+      const raw = localStorage.getItem(PRISM_MESSAGES_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as PrismChatMessage[];
+      if (!Array.isArray(parsed)) return [];
+      return trimMessages(parsed);
+    } catch {
+      return [];
+    }
+  });
   const [actions, setActions] = useState<PrismAction[]>([]);
-  const [actionMode, setActionMode] = useState(false);
+  const [actionMode, setActionMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(PRISM_ACTION_MODE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [usage, setUsage] = useState<PrismChatResponse["usage"]>();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,11 +104,32 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
     sourceRef.current = source;
   }, [source]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRISM_MESSAGES_KEY, JSON.stringify(trimMessages(messages)));
+    } catch {
+      // ignore storage errors
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRISM_ACTION_MODE_KEY, String(actionMode));
+    } catch {
+      // ignore storage errors
+    }
+  }, [actionMode]);
+
   const clearChat = useCallback(() => {
     setMessages([]);
     setActions([]);
     setUsage(undefined);
     setError(null);
+    try {
+      localStorage.removeItem(PRISM_MESSAGES_KEY);
+    } catch {
+      // ignore storage errors
+    }
   }, []);
 
   const sendMessage = useCallback(async (message: string) => {
@@ -123,7 +189,14 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
       );
       const nextMessages = trimMessages([...pendingMessages, assistantMessage]);
       setMessages(nextMessages);
-      setActions(response.actions ?? []);
+      const normalizedActions = (response.actions ?? []).map((action) => ({
+        ...action,
+        confidence: parseConfidence(action),
+      }));
+      const safeActions = normalizedActions.filter(
+        (action) => (action.confidence ?? 0) >= MIN_ACTION_CONFIDENCE
+      );
+      setActions(safeActions);
       setUsage(
         response.usage
           ? {

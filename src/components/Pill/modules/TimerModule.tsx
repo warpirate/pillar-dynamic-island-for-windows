@@ -1,5 +1,7 @@
 import { motion } from "motion/react";
 import type { TimerState } from "../../../hooks/useTimer";
+import type { TimerStats } from "../../../hooks/useTimer";
+import type { TimerCategory } from "../../../hooks/useTimer";
 import type { TimerPreset } from "../../../types/pill";
 import { microInteractions } from "../animations";
 
@@ -160,6 +162,10 @@ export function TimerAlert({ label, onDismiss }: TimerAlertProps) {
 
 interface TimerExpandedProps {
   timer: TimerState;
+  stats?: TimerStats;
+  categories?: TimerCategory[];
+  selectedCategory?: string;
+  onSelectCategory?: (categoryId: string) => void;
   presets: TimerPreset[];
   formatTime: (seconds: number) => string;
   progress: number;
@@ -172,6 +178,10 @@ interface TimerExpandedProps {
 
 export function TimerExpanded({
   timer,
+  stats,
+  categories = [],
+  selectedCategory,
+  onSelectCategory,
   presets,
   formatTime,
   progress,
@@ -286,6 +296,26 @@ export function TimerExpanded({
   // No timer - show presets
   return (
     <div className="flex flex-col gap-2 py-1">
+      {categories.length > 0 && onSelectCategory && (
+        <div className="flex flex-wrap gap-1 justify-center" role="group" aria-label="Timer categories">
+          {categories.map((category) => (
+            <button
+              key={category.id}
+              type="button"
+              className={`px-2 py-0.5 rounded text-[10px] transition-colors ${
+                selectedCategory === category.id
+                  ? "bg-white/20 text-white"
+                  : "bg-white/8 text-white/70 hover:text-white hover:bg-white/12"
+              }`}
+              aria-label={`Select ${category.label} category`}
+              aria-pressed={selectedCategory === category.id}
+              onClick={() => onSelectCategory(category.id)}
+            >
+              {category.label}
+            </button>
+          ))}
+        </div>
+      )}
       <span className="text-white/90 text-[12px] text-center uppercase tracking-wider">
         Start Timer
       </span>
@@ -309,6 +339,21 @@ export function TimerExpanded({
           </motion.button>
         ))}
       </div>
+      {stats && (
+        <div className="mt-1 text-center">
+          <p className="text-[11px] text-white/70">
+            Completed: <span className="text-white/90">{stats.sessionsCompleted}</span> sessions
+          </p>
+          <p className="text-[10px] text-white/55">
+            Focus time: {Math.floor(stats.totalFocusSeconds / 3600)}h {Math.floor((stats.totalFocusSeconds % 3600) / 60)}m
+          </p>
+          {selectedCategory && stats.byCategory[selectedCategory] && (
+            <p className="text-[10px] text-white/55">
+              Category: {stats.byCategory[selectedCategory].sessions} sessions, {Math.floor(stats.byCategory[selectedCategory].focusSeconds / 60)}m
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

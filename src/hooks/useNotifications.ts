@@ -22,6 +22,7 @@ export type NotificationPhase = "idle" | "incoming" | "absorbing" | "showing";
 
 interface UseNotificationsReturn {
   notifications: SystemNotification[];
+  history: SystemNotification[];
   hasAccess: boolean;
   isLoading: boolean;
   latestNotification: SystemNotification | null;
@@ -30,6 +31,7 @@ interface UseNotificationsReturn {
   dismissNotification: (id: number) => Promise<void>;
   refresh: () => Promise<void>;
   clearLatest: () => void;
+  clearHistory: () => void;
 }
 
 // =============================================================================
@@ -38,9 +40,12 @@ interface UseNotificationsReturn {
 
 /** Fallback poll interval (ms) when not using real-time events; only used if backend doesn't emit notification-changed. */
 const FALLBACK_POLL_MS = 30_000;
+const NOTIFICATION_HISTORY_KEY = "pillar_notification_history_v1";
+const MAX_NOTIFICATION_HISTORY = 200;
 
 export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificationsReturn {
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
+  const [history, setHistory] = useState<SystemNotification[]>([]);
   const [hasAccess, setHasAccess] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [latestNotification, setLatestNotification] = useState<SystemNotification | null>(null);
@@ -60,6 +65,21 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     maxRetries: 3,
     retryDelay: 1500,
   });
+
+  const upsertHistory = useCallback((incoming: SystemNotification[]) => {
+    if (incoming.length === 0) return;
+    setHistory((prev) => {
+      const map = new Map<number, SystemNotification>();
+      incoming.forEach((n) => map.set(n.id, n));
+      prev.forEach((n) => {
+        if (!map.has(n.id)) map.set(n.id, n);
+      });
+      const merged = Array.from(map.values())
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, MAX_NOTIFICATION_HISTORY);
+      return merged;
+    });
+  }, []);
 
   // Adaptive polling for reduced CPU usage (for fallback polling)
   const { activityLevel, isDeepSleep, triggerActivity, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
@@ -166,6 +186,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
         }
 
         setNotifications(mapped);
+        upsertHistory(mapped);
       }
     } catch (e) {
       handleError("notifications_fetch", e instanceof Error ? e : "Failed to fetch notifications");
@@ -173,7 +194,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       isPendingRef.current = false;
       setIsLoading(false);
     }
-  }, [hasAccess, checkAccess, handleError, triggerNotificationAnimation]);
+  }, [hasAccess, checkAccess, handleError, triggerNotificationAnimation, upsertHistory]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -219,6 +240,27 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
   useEffect(() => {
     checkAccess();
   }, [checkAccess]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(NOTIFICATION_HISTORY_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as SystemNotification[];
+      if (Array.isArray(parsed)) {
+        setHistory(parsed.slice(0, MAX_NOTIFICATION_HISTORY));
+      }
+    } catch {
+      // ignore malformed history cache
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTIFICATION_HISTORY_KEY, JSON.stringify(history.slice(0, MAX_NOTIFICATION_HISTORY)));
+    } catch {
+      // ignore storage errors
+    }
+  }, [history]);
 
   const unlistenChangedRef = useRef<(() => void) | null>(null);
   const unlistenAddedRef = useRef<(() => void) | null>(null);
@@ -274,6 +316,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
           if (prev.some(p => p.id === mapped.id)) return prev;
           return [mapped, ...prev].slice(0, 10);
         });
+        upsertHistory([mapped]);
 
         // Trigger toast animation if truly new
         if (mapped.id !== lastSeenIdRef.current) {
@@ -320,7 +363,7 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       unlistenAddedRef.current = null;
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [fetchNotifications, triggerNotificationAnimation, startPolling, stopPolling, resetIdleTimer]);
+  }, [fetchNotifications, triggerNotificationAnimation, startPolling, stopPolling, resetIdleTimer, upsertHistory]);
 
   // Restart polling when activity level or deep sleep state changes
   useEffect(() => {
@@ -329,8 +372,18 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     }
   }, [activityLevel, isDeepSleep, startPolling]);
 
+  const clearHistory = useCallback(() => {
+    setHistory([]);
+    try {
+      localStorage.removeItem(NOTIFICATION_HISTORY_KEY);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
   return {
     notifications,
+    history,
     hasAccess,
     isLoading,
     latestNotification,
@@ -339,5 +392,6 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     dismissNotification,
     refresh,
     clearLatest,
+    clearHistory,
   };
 }
