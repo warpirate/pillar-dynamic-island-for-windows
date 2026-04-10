@@ -28,6 +28,8 @@ use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionMediaProperties,
 };
 #[cfg(target_os = "windows")]
+use windows::Media::MediaPlaybackAutoRepeatMode;
+#[cfg(target_os = "windows")]
 use windows::Foundation::AsyncStatus;
 #[cfg(target_os = "windows")]
 use windows::Win32::Media::Audio::{
@@ -60,6 +62,8 @@ use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY}
 use windows::core::{HSTRING, Interface};
 #[cfg(target_os = "windows")]
 use windows::Foundation::TypedEventHandler;
+#[cfg(target_os = "windows")]
+use windows::Storage::Streams::{DataReader, InputStreamOptions};
 #[cfg(target_os = "windows")]
 use windows::UI::Notifications::Management::{UserNotificationListener, UserNotificationListenerAccessStatus};
 #[cfg(target_os = "windows")]
@@ -141,6 +145,151 @@ pub struct BatteryInfo {
     pub is_charging: bool,
     pub is_battery_saver: bool,
     pub has_battery: bool,      // false on desktops without a battery
+}
+
+// =============================================================================
+// Settings Persistence Types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppearanceSettingsData {
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default = "default_opacity")]
+    pub opacity: u32,
+    #[serde(default = "default_accent_color")]
+    pub accent_color: String,
+    #[serde(default)]
+    pub use_album_accent: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotionSettingsData {
+    #[serde(default = "default_animation_speed")]
+    pub animation_speed: f64,
+    #[serde(default = "default_reduced_motion")]
+    pub reduced_motion_override: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorSettingsData {
+    #[serde(default)]
+    pub launch_at_startup: bool,
+    #[serde(default)]
+    pub pause_other_sessions: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimerSettingsData {
+    #[serde(default)]
+    pub last_custom_label: String,
+    #[serde(default = "default_custom_minutes")]
+    pub last_custom_minutes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(default)]
+    pub appearance: AppearanceSettingsData,
+    #[serde(default)]
+    pub motion: MotionSettingsData,
+    #[serde(default)]
+    pub behavior: BehaviorSettingsData,
+    #[serde(default)]
+    pub timer: TimerSettingsData,
+}
+
+fn default_mode() -> String { "island".to_string() }
+fn default_opacity() -> u32 { 94 }
+fn default_accent_color() -> String { "#EB0028".to_string() }
+fn default_animation_speed() -> f64 { 1.0 }
+fn default_reduced_motion() -> String { "system".to_string() }
+fn default_custom_minutes() -> u32 { 25 }
+
+impl Default for AppearanceSettingsData {
+    fn default() -> Self {
+        Self { mode: default_mode(), opacity: default_opacity(), accent_color: default_accent_color(), use_album_accent: false }
+    }
+}
+impl Default for MotionSettingsData {
+    fn default() -> Self {
+        Self { animation_speed: default_animation_speed(), reduced_motion_override: default_reduced_motion() }
+    }
+}
+impl Default for BehaviorSettingsData {
+    fn default() -> Self {
+        Self { launch_at_startup: false, pause_other_sessions: false }
+    }
+}
+impl Default for TimerSettingsData {
+    fn default() -> Self {
+        Self { last_custom_label: String::new(), last_custom_minutes: default_custom_minutes() }
+    }
+}
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            appearance: AppearanceSettingsData::default(),
+            motion: MotionSettingsData::default(),
+            behavior: BehaviorSettingsData::default(),
+            timer: TimerSettingsData::default(),
+        }
+    }
+}
+
+fn settings_path() -> std::path::PathBuf {
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    std::path::Path::new(&app_data).join("PILLAR").join("settings.json")
+}
+
+#[tauri::command]
+fn load_settings() -> Result<AppSettings, String> {
+    let path = settings_path();
+    if !path.exists() {
+        return Ok(AppSettings::default());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let settings: AppSettings = serde_json::from_str(&content).unwrap_or_default();
+    Ok(settings)
+}
+
+#[tauri::command]
+fn save_settings(settings: AppSettings) -> Result<(), String> {
+    let path = settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// =============================================================================
+// Accent Color Extraction Types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccentColorResult {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+// =============================================================================
+// Media Timeline & Playback Info Types
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaTimeline {
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    pub can_seek: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaPlaybackInfo {
+    pub repeat_mode: String,
+    pub is_shuffle: bool,
 }
 
 // =============================================================================
@@ -699,6 +848,301 @@ fn get_current_session() -> Result<GlobalSystemMediaTransportControlsSession, St
     let manager = poll_session_manager()?;
     manager.GetCurrentSession()
         .map_err(|e| format!("No active media session: {}", e))
+}
+
+#[cfg(target_os = "windows")]
+fn timespan_to_ms(duration: windows::Foundation::TimeSpan) -> u64 {
+    if duration.Duration <= 0 { 0 } else { (duration.Duration / 10_000) as u64 }
+}
+
+#[cfg(target_os = "windows")]
+fn repeat_mode_to_string(mode: MediaPlaybackAutoRepeatMode) -> String {
+    if mode == MediaPlaybackAutoRepeatMode::Track {
+        "track".to_string()
+    } else if mode == MediaPlaybackAutoRepeatMode::List {
+        "list".to_string()
+    } else {
+        "none".to_string()
+    }
+}
+
+// =============================================================================
+// Media Timeline, Repeat, Shuffle, Pause-Other Commands
+// =============================================================================
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn get_media_timeline() -> Result<MediaTimeline, String> {
+    let session = get_current_session()?;
+    let timeline = session.GetTimelineProperties()
+        .map_err(|e| format!("Failed to get timeline properties: {}", e))?;
+    let position_ms = timeline.Position().map(timespan_to_ms)
+        .map_err(|e| format!("Failed to get position: {}", e))?;
+    let duration_ms = timeline.EndTime().map(timespan_to_ms)
+        .map_err(|e| format!("Failed to get duration: {}", e))?;
+    let playback_info = session.GetPlaybackInfo()
+        .map_err(|e| format!("Failed to get playback info: {}", e))?;
+    let controls = playback_info.Controls()
+        .map_err(|e| format!("Failed to get controls: {}", e))?;
+    let can_seek = controls.IsPlaybackPositionEnabled()
+        .map_err(|e| format!("Failed to check seek support: {}", e))?;
+    Ok(MediaTimeline { position_ms, duration_ms, can_seek })
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_media_timeline() -> Result<MediaTimeline, String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn seek_media(position_ms: u64) -> Result<(), String> {
+    let session = get_current_session()?;
+    let max_position_ms = i64::MAX as u64 / 10_000;
+    if position_ms > max_position_ms {
+        return Err("Playback position is too large".to_string());
+    }
+    let requested_position = (position_ms as i64) * 10_000;
+    let op = session.TryChangePlaybackPositionAsync(requested_position)
+        .map_err(|e| format!("Failed to seek: {}", e))?;
+    let _success = poll_bool_op(op)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn seek_media(_position_ms: u64) -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn get_media_playback_info() -> Result<MediaPlaybackInfo, String> {
+    let session = get_current_session()?;
+    let playback_info = session.GetPlaybackInfo()
+        .map_err(|e| format!("Failed to get playback info: {}", e))?;
+    let repeat_mode = playback_info.AutoRepeatMode().ok()
+        .and_then(|v| v.Value().ok())
+        .map(repeat_mode_to_string)
+        .unwrap_or_else(|| "none".to_string());
+    let is_shuffle = playback_info.IsShuffleActive().ok()
+        .and_then(|v| v.Value().ok())
+        .unwrap_or(false);
+    Ok(MediaPlaybackInfo { repeat_mode, is_shuffle })
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_media_playback_info() -> Result<MediaPlaybackInfo, String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn media_toggle_repeat() -> Result<(), String> {
+    let session = get_current_session()?;
+    let playback_info = session.GetPlaybackInfo()
+        .map_err(|e| format!("Failed to get playback info: {}", e))?;
+    let current_mode = playback_info.AutoRepeatMode().ok()
+        .and_then(|v| v.Value().ok())
+        .unwrap_or(MediaPlaybackAutoRepeatMode::None);
+    let next_mode = if current_mode == MediaPlaybackAutoRepeatMode::None {
+        MediaPlaybackAutoRepeatMode::List
+    } else if current_mode == MediaPlaybackAutoRepeatMode::List {
+        MediaPlaybackAutoRepeatMode::Track
+    } else {
+        MediaPlaybackAutoRepeatMode::None
+    };
+    let op = session.TryChangeAutoRepeatModeAsync(next_mode)
+        .map_err(|e| format!("Failed to change repeat mode: {}", e))?;
+    let _success = poll_bool_op(op)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn media_toggle_repeat() -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn media_toggle_shuffle() -> Result<(), String> {
+    let session = get_current_session()?;
+    let playback_info = session.GetPlaybackInfo()
+        .map_err(|e| format!("Failed to get playback info: {}", e))?;
+    let current_shuffle = playback_info.IsShuffleActive().ok()
+        .and_then(|v| v.Value().ok())
+        .unwrap_or(false);
+    let op = session.TryChangeShuffleActiveAsync(!current_shuffle)
+        .map_err(|e| format!("Failed to toggle shuffle: {}", e))?;
+    let _success = poll_bool_op(op)?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn media_toggle_shuffle() -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn pause_other_sessions() -> Result<(), String> {
+    let manager = poll_session_manager()?;
+    let current_session = manager.GetCurrentSession()
+        .map_err(|e| format!("No active media session: {}", e))?;
+    let sessions = manager.GetSessions()
+        .map_err(|e| format!("Failed to get sessions: {}", e))?;
+    let count = sessions.Size()
+        .map_err(|e| format!("Failed to get session count: {}", e))?;
+    for index in 0..count {
+        let session = sessions.GetAt(index)
+            .map_err(|e| format!("Failed to get session: {}", e))?;
+        if session == current_session { continue; }
+        let playback_info = session.GetPlaybackInfo()
+            .map_err(|e| format!("Failed to get playback info: {}", e))?;
+        let playback_status = playback_info.PlaybackStatus()
+            .map_err(|e| format!("Failed to get playback status: {}", e))?;
+        if playback_status == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing {
+            let op = session.TryPauseAsync()
+                .map_err(|e| format!("Failed to pause session: {}", e))?;
+            let _success = poll_bool_op(op)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn pause_other_sessions() -> Result<(), String> {
+    Err("Media controls not supported on this platform".to_string())
+}
+
+// =============================================================================
+// Album Art Accent Color Extraction
+// =============================================================================
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn extract_accent_color() -> Result<AccentColorResult, String> {
+    let session = get_current_session()?;
+
+    // Get media properties (async)
+    let props_op = session.TryGetMediaPropertiesAsync()
+        .map_err(|e| format!("Failed to get media properties: {}", e))?;
+
+    // Poll until complete
+    let mut attempts = 0;
+    loop {
+        let status = props_op.Status().map_err(|e| format!("Status check failed: {}", e))?;
+        if status == AsyncStatus::Completed { break; }
+        if status == AsyncStatus::Error {
+            return Err("Failed to get media properties".to_string());
+        }
+        attempts += 1;
+        if attempts > 100 { return Err("Timeout getting media properties".to_string()); }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let props = props_op.GetResults()
+        .map_err(|e| format!("Failed to get properties result: {}", e))?;
+
+    let thumbnail_ref = props.Thumbnail()
+        .map_err(|e| format!("No thumbnail available: {}", e))?;
+
+    // Open the thumbnail stream
+    let stream_op = thumbnail_ref.OpenReadAsync()
+        .map_err(|e| format!("Failed to open thumbnail stream: {}", e))?;
+
+    let mut attempts = 0;
+    loop {
+        let status = stream_op.Status().map_err(|e| format!("Stream status failed: {}", e))?;
+        if status == AsyncStatus::Completed { break; }
+        if status == AsyncStatus::Error {
+            return Err("Failed to open thumbnail stream".to_string());
+        }
+        attempts += 1;
+        if attempts > 100 { return Err("Timeout opening thumbnail".to_string()); }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let stream = stream_op.GetResults()
+        .map_err(|e| format!("Failed to get stream: {}", e))?;
+
+    let size = stream.Size().map_err(|e| format!("Failed to get stream size: {}", e))? as u32;
+    if size == 0 {
+        return Err("Thumbnail is empty".to_string());
+    }
+
+    // Read all bytes
+    let reader = DataReader::CreateDataReader(&stream)
+        .map_err(|e| format!("Failed to create data reader: {}", e))?;
+    reader.SetInputStreamOptions(InputStreamOptions::ReadAhead)
+        .map_err(|e| format!("Failed to set stream options: {}", e))?;
+
+    let load_op = reader.LoadAsync(size)
+        .map_err(|e| format!("Failed to load bytes: {}", e))?;
+
+    let mut attempts = 0;
+    loop {
+        let status = load_op.Status().map_err(|e| format!("Load status failed: {}", e))?;
+        if status == AsyncStatus::Completed { break; }
+        if status == AsyncStatus::Error {
+            return Err("Failed to load thumbnail bytes".to_string());
+        }
+        attempts += 1;
+        if attempts > 100 { return Err("Timeout reading thumbnail".to_string()); }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    let bytes_loaded = load_op.GetResults()
+        .map_err(|e| format!("Failed to get loaded byte count: {}", e))?;
+
+    let mut buf = vec![0u8; bytes_loaded as usize];
+    reader.ReadBytes(&mut buf)
+        .map_err(|e| format!("Failed to read bytes: {}", e))?;
+
+    // Average color from raw bytes — sample every 4-byte BGRA group
+    // Skip first 100 bytes (potential image header) and sample every 16th pixel for speed
+    let mut r_sum: u64 = 0;
+    let mut g_sum: u64 = 0;
+    let mut b_sum: u64 = 0;
+    let mut count: u64 = 0;
+    let start = 100.min(buf.len());
+    let step = 64; // sample every 16th pixel (16*4 bytes)
+
+    let mut i = start;
+    while i + 3 < buf.len() {
+        let b = buf[i] as u64;
+        let g = buf[i + 1] as u64;
+        let r = buf[i + 2] as u64;
+        // Skip very dark and very bright pixels
+        if (r + g + b) > 60 && (r + g + b) < 700 {
+            r_sum += r;
+            g_sum += g;
+            b_sum += b;
+            count += 1;
+        }
+        i += step;
+    }
+
+    if count == 0 {
+        return Ok(AccentColorResult { r: 128, g: 128, b: 128 });
+    }
+
+    Ok(AccentColorResult {
+        r: (r_sum / count) as u8,
+        g: (g_sum / count) as u8,
+        b: (b_sum / count) as u8,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn extract_accent_color() -> Result<AccentColorResult, String> {
+    Err("Accent color extraction not supported on this platform".to_string())
 }
 
 /// Get current media session info (now playing)
@@ -2088,6 +2532,18 @@ pub fn run() {
             set_autostart_enabled,
             // Battery
             get_battery_info,
+            // Settings persistence
+            load_settings,
+            save_settings,
+            // Album art accent color
+            extract_accent_color,
+            // Media timeline & controls
+            get_media_timeline,
+            seek_media,
+            get_media_playback_info,
+            media_toggle_repeat,
+            media_toggle_shuffle,
+            pause_other_sessions,
             // Prism AI
             prism_chat
         ])

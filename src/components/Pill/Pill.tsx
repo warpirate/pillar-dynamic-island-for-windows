@@ -12,6 +12,7 @@ import { useNotifications } from "../../hooks/useNotifications";
 import { useBattery } from "../../hooks/useBattery";
 import { usePrismAI } from "../../hooks/usePrismAI";
 import { useAppearance, hexToRgba } from "../../hooks/useAppearance";
+import { useSettings } from "../../hooks/useSettings";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { BatteryIndicator } from "./modules/BatteryModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
@@ -99,9 +100,14 @@ export function Pill() {
   // Media session hook
   const {
     media,
+    timeline,
+    playbackInfo,
     playPause,
     next: mediaNext,
     previous: mediaPrevious,
+    toggleRepeat,
+    toggleShuffle,
+    seekTo,
   } = useMediaSession(1500); // Poll every 1.5s (reduced from 600ms to avoid saturating backend)
 
   // Volume hook
@@ -157,6 +163,45 @@ export function Pill() {
   // Appearance settings (mode, opacity, accent color)
   const appearance = useAppearance();
   const isNotch = appearance.active.mode === "notch";
+
+  // Centralized settings (motion, behavior, timer persistence)
+  const { settings: appSettings, update: updateSettings } = useSettings();
+
+  // Album art accent color polling
+  const [albumAccentColor, setAlbumAccentColor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!appearance.active.useAlbumAccent || !media) {
+      setAlbumAccentColor(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await tauriInvoke<{ r: number; g: number; b: number }>("extract_accent_color");
+        if (!cancelled && result) {
+          const hex = `#${result.r.toString(16).padStart(2, "0")}${result.g.toString(16).padStart(2, "0")}${result.b.toString(16).padStart(2, "0")}`;
+          setAlbumAccentColor(hex);
+        }
+      } catch {
+        // extract_accent_color not available or failed — ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [appearance.active.useAlbumAccent, media?.title, media?.artist]);
+
+  // Effective accent color: album art override or user setting
+  const effectiveAccentColor = (appearance.active.useAlbumAccent && albumAccentColor) ? albumAccentColor : appearance.active.accentColor;
+
+  // Auto-pause other sessions when a new session starts playing
+  const prevMediaTitleRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!appSettings.behavior.pause_other_sessions || !media?.isPlaying) return;
+    const currentTitle = media.title;
+    if (prevMediaTitleRef.current !== null && prevMediaTitleRef.current !== currentTitle) {
+      tauriInvoke("pause_other_sessions").catch(() => {});
+    }
+    prevMediaTitleRef.current = currentTitle;
+  }, [media?.title, media?.isPlaying, appSettings.behavior.pause_other_sessions]);
 
   const {
     messages: prismMessages,
@@ -718,7 +763,7 @@ export function Pill() {
                 >
                   {time.length > 0 ? (
                     <>
-                      <span style={{ color: appearance.active.accentColor, textShadow: `0 0 10px ${hexToRgba(appearance.active.accentColor, 0.5)}` }}>
+                      <span style={{ color: effectiveAccentColor, textShadow: `0 0 10px ${hexToRgba(effectiveAccentColor, 0.5)}` }}>
                         {time[0]}
                       </span>
                       <span style={{ color: "#ffffff", textShadow: "0 1px 2px rgba(0,0,0,0.3)" }}>
@@ -791,7 +836,7 @@ export function Pill() {
               <div className="flex items-center gap-pill-md">
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{ background: `linear-gradient(to bottom right, ${hexToRgba(appearance.active.accentColor, 0.4)}, ${hexToRgba(appearance.active.accentColor, 0.2)})` }}
+                  style={{ background: `linear-gradient(to bottom right, ${hexToRgba(effectiveAccentColor, 0.4)}, ${hexToRgba(effectiveAccentColor, 0.2)})` }}
                 >
                   <span className="text-white text-pill-xs font-bold">P</span>
                 </div>
@@ -898,9 +943,15 @@ export function Pill() {
                   >
                     <MediaExpanded
                       media={media}
+                      timeline={timeline}
+                      playbackInfo={playbackInfo}
+                      accentColor={effectiveAccentColor}
                       onPlayPause={playPause}
                       onNext={mediaNext}
                       onPrevious={mediaPrevious}
+                      onToggleRepeat={toggleRepeat}
+                      onToggleShuffle={toggleShuffle}
+                      onSeek={seekTo}
                     />
                   </motion.div>
                 )}
@@ -982,6 +1033,10 @@ export function Pill() {
                       autoStartEnabled={autoStartEnabled}
                       onAutoStartToggle={() => setAutoStartEnabled(!autoStartEnabled)}
                       appearance={appearance}
+                      motionSettings={{
+                        animationSpeed: appSettings.motion.animation_speed,
+                        onAnimationSpeedChange: (speed) => updateSettings({ motion: { animation_speed: speed } }),
+                      }}
                     />
                   </motion.div>
                 )}

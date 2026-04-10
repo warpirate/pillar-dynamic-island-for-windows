@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
-import type { MediaInfo } from "../../../hooks/useMediaSession";
+import { useState, useCallback, useRef } from "react";
+import type { MediaInfo, MediaTimeline, MediaPlaybackInfo } from "../../../hooks/useMediaSession";
 import { microInteractions } from "../animations";
 
 // =============================================================================
@@ -18,7 +19,7 @@ export function MediaIndicator({ isPlaying }: MediaIndicatorProps) {
           key={i}
           className="w-0.5 bg-blue-400 rounded-full"
           animate={{
-            height: isPlaying 
+            height: isPlaying
               ? ["4px", "12px", "6px", "10px", "4px"]
               : "4px",
           }}
@@ -45,7 +46,7 @@ interface MediaCompactProps {
 
 export function MediaCompact({ media, onPlayPause }: MediaCompactProps) {
   return (
-    <div 
+    <div
       className="flex items-center gap-2 px-1 cursor-pointer"
       onClick={onPlayPause}
     >
@@ -54,6 +55,131 @@ export function MediaCompact({ media, onPlayPause }: MediaCompactProps) {
         {media.title || "Unknown"}
       </span>
     </div>
+  );
+}
+
+// =============================================================================
+// Seekbar Component
+// =============================================================================
+
+function formatTime(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+interface SeekBarProps {
+  timeline: MediaTimeline;
+  accentColor?: string;
+  onSeek: (positionMs: number) => void;
+}
+
+function SeekBar({ timeline, accentColor, onSeek }: SeekBarProps) {
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragPosition, setDragPosition] = useState(0);
+  const barRef = useRef<HTMLDivElement>(null);
+
+  const progress = isDragging
+    ? dragPosition
+    : timeline.durationMs > 0
+    ? timeline.positionMs / timeline.durationMs
+    : 0;
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!timeline.canSeek || !barRef.current) return;
+      e.preventDefault();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      const rect = barRef.current.getBoundingClientRect();
+      const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      setDragPosition(pos);
+      setIsDragging(true);
+    },
+    [timeline.canSeek]
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!isDragging || !barRef.current) return;
+      const rect = barRef.current.getBoundingClientRect();
+      const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      setDragPosition(pos);
+    },
+    [isDragging]
+  );
+
+  const handlePointerUp = useCallback(() => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    onSeek(dragPosition * timeline.durationMs);
+  }, [isDragging, dragPosition, timeline.durationMs, onSeek]);
+
+  const displayPosition = isDragging
+    ? dragPosition * timeline.durationMs
+    : timeline.positionMs;
+
+  return (
+    <div className="flex flex-col gap-1 w-full px-1">
+      <div
+        ref={barRef}
+        className="relative h-1.5 bg-white/15 rounded-full cursor-pointer group"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+      >
+        <div
+          className="absolute left-0 top-0 h-full rounded-full transition-[width] duration-100"
+          style={{
+            width: `${progress * 100}%`,
+            backgroundColor: accentColor || "#3B82F6",
+          }}
+        />
+        {/* Drag handle — visible on hover/drag */}
+        {timeline.canSeek && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{
+              left: `calc(${progress * 100}% - 6px)`,
+              backgroundColor: accentColor || "#3B82F6",
+              opacity: isDragging ? 1 : undefined,
+            }}
+          />
+        )}
+      </div>
+      <div className="flex justify-between text-[10px] text-white/50">
+        <span>{formatTime(displayPosition)}</span>
+        <span>{formatTime(timeline.durationMs)}</span>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Repeat & Shuffle Icons
+// =============================================================================
+
+function RepeatIcon({ mode }: { mode: "none" | "track" | "list" }) {
+  if (mode === "track") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+        <text x="12" y="15" textAnchor="middle" fontSize="8" fill="currentColor">1</text>
+      </svg>
+    );
+  }
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+    </svg>
+  );
+}
+
+function ShuffleIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
+    </svg>
   );
 }
 
@@ -77,16 +203,28 @@ function getSourceLabel(appName: string | undefined): string | null {
 
 interface MediaExpandedProps {
   media: MediaInfo | null;
+  timeline?: MediaTimeline | null;
+  playbackInfo?: MediaPlaybackInfo | null;
+  accentColor?: string;
   onPlayPause: () => void;
   onNext: () => void;
   onPrevious: () => void;
+  onToggleRepeat?: () => void;
+  onToggleShuffle?: () => void;
+  onSeek?: (positionMs: number) => void;
 }
 
-export function MediaExpanded({ 
-  media, 
-  onPlayPause, 
-  onNext, 
-  onPrevious 
+export function MediaExpanded({
+  media,
+  timeline,
+  playbackInfo,
+  accentColor,
+  onPlayPause,
+  onNext,
+  onPrevious,
+  onToggleRepeat,
+  onToggleShuffle,
+  onSeek,
 }: MediaExpandedProps) {
   if (!media) {
     return (
@@ -112,23 +250,23 @@ export function MediaExpanded({
         <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500/30 to-purple-500/30 flex items-center justify-center flex-shrink-0">
           <span className="text-xl">🎵</span>
         </div>
-        
+
         {/* Track info - single line each, source one line */}
         <div className="flex flex-col min-w-0 flex-1">
-          <span 
+          <span
             className="text-white font-medium truncate text-pill-md"
             title={media.title || undefined}
           >
             {media.title || "Unknown Track"}
           </span>
-          <span 
+          <span
             className="text-pill-muted text-pill-base truncate"
             title={media.artist || undefined}
           >
             {media.artist || "Unknown Artist"}
           </span>
           {sourceLabel && (
-            <span 
+            <span
               className="text-white/70 text-pill-base truncate mt-pill-xs"
               title={sourceLabel}
             >
@@ -136,13 +274,39 @@ export function MediaExpanded({
             </span>
           )}
         </div>
-        
+
         {/* Playing indicator */}
         <MediaIndicator isPlaying={media.isPlaying} />
       </div>
 
+      {/* Seekbar */}
+      {timeline && timeline.durationMs > 0 && onSeek && (
+        <SeekBar
+          timeline={timeline}
+          accentColor={accentColor}
+          onSeek={onSeek}
+        />
+      )}
+
       {/* Controls */}
-      <div className="flex items-center justify-center gap-3" role="group" aria-label="Media playback controls">
+      <div className="flex items-center justify-center gap-2" role="group" aria-label="Media playback controls">
+        {/* Shuffle */}
+        {onToggleShuffle && (
+          <motion.button
+            className="w-7 h-7 rounded-full flex items-center justify-center"
+            aria-label={playbackInfo?.isShuffle ? "Disable shuffle" : "Enable shuffle"}
+            style={{
+              color: playbackInfo?.isShuffle ? (accentColor || "#3B82F6") : "rgba(255,255,255,0.5)",
+            }}
+            whileHover={microInteractions.icon.whileHover}
+            whileTap={microInteractions.icon.whileTap}
+            transition={microInteractions.icon.transition}
+            onClick={onToggleShuffle}
+          >
+            <ShuffleIcon />
+          </motion.button>
+        )}
+
         {/* Previous */}
         <motion.button
           className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white"
@@ -166,9 +330,10 @@ export function MediaExpanded({
 
         {/* Play/Pause */}
         <motion.button
-          className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center text-white"
+          className="w-12 h-12 rounded-full flex items-center justify-center text-white"
           aria-label={media.isPlaying ? "Pause playback" : "Play playback"}
-          whileHover={{ scale: 1.05, backgroundColor: "rgba(255, 255, 255, 0.25)" }}
+          style={{ backgroundColor: accentColor ? `${accentColor}40` : "rgba(255, 255, 255, 0.2)" }}
+          whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={onPlayPause}
           onKeyDown={(e) => {
@@ -209,6 +374,23 @@ export function MediaExpanded({
             <path d="M6 18l8.5-6L6 6v12zm8.5 0h2V6h-2v12z"/>
           </svg>
         </motion.button>
+
+        {/* Repeat */}
+        {onToggleRepeat && (
+          <motion.button
+            className="w-7 h-7 rounded-full flex items-center justify-center"
+            aria-label={`Repeat: ${playbackInfo?.repeatMode || "none"}`}
+            style={{
+              color: playbackInfo?.repeatMode !== "none" ? (accentColor || "#3B82F6") : "rgba(255,255,255,0.5)",
+            }}
+            whileHover={microInteractions.icon.whileHover}
+            whileTap={microInteractions.icon.whileTap}
+            transition={microInteractions.icon.transition}
+            onClick={onToggleRepeat}
+          >
+            <RepeatIcon mode={playbackInfo?.repeatMode || "none"} />
+          </motion.button>
+        )}
       </div>
     </div>
   );

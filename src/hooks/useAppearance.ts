@@ -1,4 +1,6 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { tauriInvoke } from "../lib/tauri";
+import type { AppSettings } from "./useSettings";
 
 export type PillMode = "island" | "notch";
 
@@ -6,12 +8,14 @@ export interface AppearanceSettings {
   mode: PillMode;
   opacity: number;
   accentColor: string;
+  useAlbumAccent: boolean;
 }
 
 export const APPEARANCE_DEFAULTS: AppearanceSettings = {
   mode: "island",
   opacity: 94,
   accentColor: "#EB0028",
+  useAlbumAccent: false,
 };
 
 export const ACCENT_PRESETS = [
@@ -32,27 +36,74 @@ export function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-const STORAGE_KEY = "pillar-appearance";
-
-function loadSettings(): AppearanceSettings {
+// Migrate old localStorage settings to Rust backend on first load
+async function migrateLocalStorage(): Promise<Partial<AppearanceSettings> | null> {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem("pillar-appearance");
     if (stored) {
       const parsed = JSON.parse(stored);
-      return { ...APPEARANCE_DEFAULTS, ...parsed };
+      localStorage.removeItem("pillar-appearance");
+      localStorage.removeItem("pillar-pill-mode");
+      return parsed;
     }
-    // Migrate from old pill-mode key
     const oldMode = localStorage.getItem("pillar-pill-mode");
     if (oldMode === "island" || oldMode === "notch") {
-      return { ...APPEARANCE_DEFAULTS, mode: oldMode };
+      localStorage.removeItem("pillar-pill-mode");
+      return { mode: oldMode };
     }
   } catch { /* ignore */ }
-  return { ...APPEARANCE_DEFAULTS };
+  return null;
 }
 
 export function useAppearance() {
-  const [saved, setSaved] = useState<AppearanceSettings>(loadSettings);
+  const [saved, setSaved] = useState<AppearanceSettings>(APPEARANCE_DEFAULTS);
   const [draft, setDraft] = useState<AppearanceSettings | null>(null);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  // Load from Rust backend on mount
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      // First check if there's old localStorage data to migrate
+      const migrated = await migrateLocalStorage();
+
+      const loaded = await tauriInvoke<AppSettings>("load_settings");
+      if (!mounted) return;
+
+      const fromBackend: AppearanceSettings = loaded
+        ? {
+            mode: (loaded.appearance.mode as PillMode) || APPEARANCE_DEFAULTS.mode,
+            opacity: loaded.appearance.opacity ?? APPEARANCE_DEFAULTS.opacity,
+            accentColor: loaded.appearance.accent_color || APPEARANCE_DEFAULTS.accentColor,
+            useAlbumAccent: loaded.appearance.use_album_accent ?? false,
+          }
+        : APPEARANCE_DEFAULTS;
+
+      // If we migrated localStorage data, merge it and save
+      if (migrated) {
+        const merged = { ...fromBackend, ...migrated };
+        setSaved(merged);
+        // Save migrated data to Rust backend
+        const fullSettings = loaded || {
+          appearance: { mode: "island", opacity: 94, accent_color: "#EB0028", use_album_accent: false },
+          motion: { animation_speed: 1.0, reduced_motion_override: "system" },
+          behavior: { launch_at_startup: false, pause_other_sessions: false },
+          timer: { last_custom_label: "", last_custom_minutes: 25 },
+        };
+        fullSettings.appearance = {
+          mode: merged.mode,
+          opacity: merged.opacity,
+          accent_color: merged.accentColor,
+          use_album_accent: merged.useAlbumAccent,
+        };
+        await tauriInvoke("save_settings", { settings: fullSettings });
+      } else {
+        setSaved(fromBackend);
+      }
+      setIsLoaded(true);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   const isEditing = draft !== null;
   const active = draft ?? saved;
@@ -65,28 +116,43 @@ export function useAppearance() {
     setDraft((prev) => (prev ? { ...prev, ...changes } : null));
   }, []);
 
-  const save = useCallback(() => {
+  const save = useCallback(async () => {
     if (draft) {
       setSaved(draft);
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
-      } catch { /* ignore */ }
       setDraft(null);
+      // Save to Rust backend
+      const loaded = await tauriInvoke<AppSettings>("load_settings");
+      if (loaded) {
+        loaded.appearance = {
+          mode: draft.mode,
+          opacity: draft.opacity,
+          accent_color: draft.accentColor,
+          use_album_accent: draft.useAlbumAccent,
+        };
+        await tauriInvoke("save_settings", { settings: loaded });
+      }
     }
   }, [draft]);
 
-  const reset = useCallback(() => {
+  const reset = useCallback(async () => {
     const defaults = { ...APPEARANCE_DEFAULTS };
     setSaved(defaults);
     setDraft(null);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
-    } catch { /* ignore */ }
+    const loaded = await tauriInvoke<AppSettings>("load_settings");
+    if (loaded) {
+      loaded.appearance = {
+        mode: defaults.mode,
+        opacity: defaults.opacity,
+        accent_color: defaults.accentColor,
+        use_album_accent: defaults.useAlbumAccent,
+      };
+      await tauriInvoke("save_settings", { settings: loaded });
+    }
   }, []);
 
   const discard = useCallback(() => {
     setDraft(null);
   }, []);
 
-  return { active, isEditing, startEditing, updateDraft, save, reset, discard };
+  return { active, isEditing, isLoaded, startEditing, updateDraft, save, reset, discard };
 }

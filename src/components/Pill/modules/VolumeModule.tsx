@@ -422,6 +422,11 @@ interface AppearanceControls {
   discard: () => void;
 }
 
+interface MotionSettings {
+  animationSpeed: number;
+  onAnimationSpeedChange: (speed: number) => void;
+}
+
 interface QuickSettingsProps {
   volume: VolumeInfo;
   onVolumeChange: (level: number) => void;
@@ -436,6 +441,7 @@ interface QuickSettingsProps {
   autoStartEnabled: boolean;
   onAutoStartToggle: () => void;
   appearance: AppearanceControls;
+  motionSettings?: MotionSettings;
 }
 
 export function QuickSettings({
@@ -452,6 +458,7 @@ export function QuickSettings({
   autoStartEnabled,
   onAutoStartToggle,
   appearance,
+  motionSettings,
 }: QuickSettingsProps) {
   const [showMixer, setShowMixer] = useState(false);
   const [view, setView] = useState<"main" | "appearance">("main");
@@ -468,6 +475,8 @@ export function QuickSettings({
     return (
       <AppearanceModule
         settings={appearance.active}
+        animationSpeed={motionSettings?.animationSpeed}
+        onAnimationSpeedChange={motionSettings?.onAnimationSpeedChange}
         onUpdate={appearance.updateDraft}
         onSave={() => { appearance.save(); setView("main"); }}
         onReset={() => { appearance.reset(); setView("main"); }}

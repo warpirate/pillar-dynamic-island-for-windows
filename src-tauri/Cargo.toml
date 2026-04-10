@@ -52,6 +52,7 @@ features = [
   # Async support
   "Foundation",
   "Foundation_Collections",
+  "Storage_Streams",
   "implement",
   # Notifications (includes UserNotification.AppInfo -> need ApplicationModel for DisplayInfo)
   "UI_Notifications",

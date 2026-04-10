@@ -4,15 +4,25 @@ import type { AppearanceSettings, PillMode } from "../../../hooks/useAppearance"
 import { ACCENT_PRESETS } from "../../../hooks/useAppearance";
 import { microInteractions } from "../animations";
 
+const SPEED_PRESETS = [
+  { label: "0.5x", value: 0.5 },
+  { label: "0.75x", value: 0.75 },
+  { label: "1x", value: 1.0 },
+  { label: "1.5x", value: 1.5 },
+  { label: "2x", value: 2.0 },
+];
+
 interface AppearanceModuleProps {
   settings: AppearanceSettings;
+  animationSpeed?: number;
+  onAnimationSpeedChange?: (speed: number) => void;
   onUpdate: (changes: Partial<AppearanceSettings>) => void;
   onSave: () => void;
   onReset: () => void;
   onBack: () => void;
 }
 
-export function AppearanceModule({ settings, onUpdate, onSave, onReset, onBack }: AppearanceModuleProps) {
+export function AppearanceModule({ settings, animationSpeed = 1.0, onAnimationSpeedChange, onUpdate, onSave, onReset, onBack }: AppearanceModuleProps) {
   const [hoveredMode, setHoveredMode] = useState<PillMode | null>(null);
 
   return (
@@ -152,6 +162,50 @@ export function AppearanceModule({ settings, onUpdate, onSave, onReset, onBack }
             );
           })}
         </div>
+      </div>
+
+      {/* Animation Speed */}
+      {onAnimationSpeedChange && (
+        <div className="flex flex-col gap-1">
+          <span className="text-white/50 text-[10px] uppercase tracking-wider font-medium">Animation Speed</span>
+          <div className="flex gap-1">
+            {SPEED_PRESETS.map((preset) => (
+              <motion.button
+                key={preset.value}
+                className={`flex-1 py-1 rounded-md text-[10px] font-medium transition-colors ${
+                  animationSpeed === preset.value
+                    ? "bg-white/15 text-white"
+                    : "bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/60"
+                }`}
+                onClick={() => onAnimationSpeedChange(preset.value)}
+                whileTap={{ scale: 0.95 }}
+              >
+                {preset.label}
+              </motion.button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Album Art Accent Toggle */}
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <span className="text-white/50 text-[10px] uppercase tracking-wider font-medium">Album Art Accent</span>
+          <span className="text-white/30 text-[9px]">Use album colors as accent</span>
+        </div>
+        <motion.button
+          className={`w-8 h-4 rounded-full relative transition-colors ${
+            settings.useAlbumAccent ? "bg-white/30" : "bg-white/10"
+          }`}
+          onClick={() => onUpdate({ useAlbumAccent: !settings.useAlbumAccent })}
+          whileTap={{ scale: 0.95 }}
+        >
+          <motion.div
+            className="w-3 h-3 rounded-full bg-white absolute top-0.5"
+            animate={{ left: settings.useAlbumAccent ? 17 : 2 }}
+            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+          />
+        </motion.button>
       </div>
 
       {/* Spacer */}

@@ -13,13 +13,30 @@ export interface MediaInfo {
   appName?: string;
 }
 
+export interface MediaTimeline {
+  positionMs: number;
+  durationMs: number;
+  canSeek: boolean;
+}
+
+export interface MediaPlaybackInfo {
+  repeatMode: "none" | "track" | "list";
+  isShuffle: boolean;
+}
+
 interface UseMediaSessionReturn {
   media: MediaInfo | null;
+  timeline: MediaTimeline | null;
+  playbackInfo: MediaPlaybackInfo | null;
   isLoading: boolean;
   error: string | null;
   playPause: () => Promise<void>;
   next: () => Promise<void>;
   previous: () => Promise<void>;
+  toggleRepeat: () => Promise<void>;
+  toggleShuffle: () => Promise<void>;
+  seekTo: (positionMs: number) => Promise<void>;
+  pauseOtherSessions: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -31,6 +48,17 @@ interface RawMediaInfo {
   app_name?: string;
 }
 
+interface RawMediaTimeline {
+  position_ms: number;
+  duration_ms: number;
+  can_seek: boolean;
+}
+
+interface RawMediaPlaybackInfo {
+  repeat_mode: string;
+  is_shuffle: boolean;
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
@@ -40,6 +68,8 @@ export function useMediaSession(
   onMediaChange?: (media: MediaInfo | null) => void
 ): UseMediaSessionReturn {
   const [media, setMedia] = useState<MediaInfo | null>(null);
+  const [timeline, setTimeline] = useState<MediaTimeline | null>(null);
+  const [playbackInfo, setPlaybackInfo] = useState<MediaPlaybackInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,6 +102,33 @@ export function useMediaSession(
       if (onMediaChangeRef.current) {
         onMediaChangeRef.current(transformed);
       }
+
+      // Fetch timeline and playback info when media exists
+      if (transformed) {
+        const rawTimeline = await tauriInvoke<RawMediaTimeline | null>("get_media_timeline");
+        if (rawTimeline) {
+          setTimeline({
+            positionMs: rawTimeline.position_ms,
+            durationMs: rawTimeline.duration_ms,
+            canSeek: rawTimeline.can_seek,
+          });
+        } else {
+          setTimeline(null);
+        }
+
+        const rawPlayback = await tauriInvoke<RawMediaPlaybackInfo | null>("get_media_playback_info");
+        if (rawPlayback) {
+          setPlaybackInfo({
+            repeatMode: rawPlayback.repeat_mode as "none" | "track" | "list",
+            isShuffle: rawPlayback.is_shuffle,
+          });
+        } else {
+          setPlaybackInfo(null);
+        }
+      } else {
+        setTimeline(null);
+        setPlaybackInfo(null);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to get media session");
     } finally {
@@ -88,7 +145,6 @@ export function useMediaSession(
   // Media controls
   const playPause = useCallback(async () => {
     await tauriInvoke("media_play_pause");
-    // Refresh immediately after action
     setTimeout(fetchMedia, 100);
   }, [fetchMedia]);
 
@@ -101,6 +157,25 @@ export function useMediaSession(
     await tauriInvoke("media_previous");
     setTimeout(fetchMedia, 100);
   }, [fetchMedia]);
+
+  const toggleRepeat = useCallback(async () => {
+    await tauriInvoke("media_toggle_repeat");
+    setTimeout(fetchMedia, 100);
+  }, [fetchMedia]);
+
+  const toggleShuffle = useCallback(async () => {
+    await tauriInvoke("media_toggle_shuffle");
+    setTimeout(fetchMedia, 100);
+  }, [fetchMedia]);
+
+  const seekTo = useCallback(async (positionMs: number) => {
+    await tauriInvoke("seek_media", { positionMs: Math.round(positionMs) });
+    setTimeout(fetchMedia, 150);
+  }, [fetchMedia]);
+
+  const pauseOtherSessions = useCallback(async () => {
+    await tauriInvoke("pause_other_sessions");
+  }, []);
 
   // Start polling when mounted
   useEffect(() => {
@@ -137,11 +212,17 @@ export function useMediaSession(
 
   return {
     media,
+    timeline,
+    playbackInfo,
     isLoading,
     error,
     playPause,
     next,
     previous,
+    toggleRepeat,
+    toggleShuffle,
+    seekTo,
+    pauseOtherSessions,
     refresh,
   };
 }
