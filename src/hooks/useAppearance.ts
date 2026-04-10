@@ -90,7 +90,7 @@ export function useAppearance() {
           behavior: { launch_at_startup: false, pause_other_sessions: false },
           timer: { last_custom_label: "", last_custom_minutes: 25 },
           layout: {
-            visible_tabs: { timer: true, media: true, notifications: true, settings: true, prism: true },
+            visible_tabs: { timer: true, media: true, notifications: true, settings: true, prism: true, productivity: true },
             idle_indicators: { media: true, battery: true, notifications: true },
           },
         };

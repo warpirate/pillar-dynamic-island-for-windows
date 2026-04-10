@@ -21,6 +21,12 @@ export interface PrismContextSource {
   audioSessions: AudioSession[];
   autoStartEnabled: boolean;
   battery: BatteryInfo;
+  productivitySummary: {
+    taskCount: number;
+    completedTaskCount: number;
+    noteCount: number;
+    upcomingEventCount: number;
+  };
 }
 
 function truncate(value: string, maxChars: number): string {
@@ -39,6 +45,7 @@ function detectIntent(userMessage: string): {
   wantsNotifications: boolean;
   wantsSettings: boolean;
   wantsBattery: boolean;
+  wantsProductivity: boolean;
 } {
   const lower = userMessage.toLowerCase();
   const wantsOverview =
@@ -48,6 +55,7 @@ function detectIntent(userMessage: string): {
   const wantsNotifications = /(notification|notifs|alert|message|inbox|whatsapp|mail)/.test(lower);
   const wantsSettings = /(volume|mute|brightness|audio|mixer|autostart|settings)/.test(lower);
   const wantsBattery = /(battery|charge|charging|power|energy|percent|low battery)/.test(lower);
+  const wantsProductivity = /(task|todo|note|notes|agenda|calendar|event|productivity)/.test(lower);
 
   return {
     wantsOverview,
@@ -56,6 +64,7 @@ function detectIntent(userMessage: string): {
     wantsNotifications,
     wantsSettings,
     wantsBattery,
+    wantsProductivity,
   };
 }
 
@@ -166,6 +175,13 @@ function buildBatteryBlock(battery: BatteryInfo): PrismContextBlock {
   };
 }
 
+function buildProductivityBlock(source: PrismContextSource["productivitySummary"]): PrismContextBlock {
+  return {
+    kind: "productivity",
+    content: stableJson(source),
+  };
+}
+
 export function buildPrismContext(
   userMessage: string,
   source: PrismContextSource
@@ -204,6 +220,10 @@ export function buildPrismContext(
     pushBlock(blocks, buildBatteryBlock(source.battery), usedChars);
   }
 
+  if (includeAll || intent.wantsProductivity) {
+    pushBlock(blocks, buildProductivityBlock(source.productivitySummary), usedChars);
+  }
+
   if (blocks.length === 0) {
     pushBlock(
       blocks,
@@ -217,6 +237,8 @@ export function buildPrismContext(
           muted: source.volume.isMuted,
           batteryPercent: source.battery.hasBattery ? source.battery.percent : null,
           batteryCharging: source.battery.isCharging,
+          productivityTaskCount: source.productivitySummary.taskCount,
+          productivityEventCount: source.productivitySummary.upcomingEventCount,
         }),
       },
       usedChars

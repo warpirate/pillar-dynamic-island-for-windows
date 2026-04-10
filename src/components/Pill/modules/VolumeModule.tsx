@@ -596,7 +596,7 @@ export function QuickSettings({
         <div className="flex flex-col gap-1 rounded-lg bg-white/5 p-2">
           <span className="text-white/85 text-[11px] uppercase tracking-wider">Layout</span>
           <div className="grid grid-cols-2 gap-1">
-            {(["timer", "media", "notifications", "settings", "prism"] as const).map((tabId) => (
+            {(["timer", "media", "notifications", "settings", "prism", "productivity"] as const).map((tabId) => (
               <button
                 key={tabId}
                 type="button"
@@ -656,6 +656,7 @@ export function QuickSettings({
                   notifications: true,
                   settings: true,
                   prism: true,
+                  productivity: true,
                 },
                 idle_indicators: {
                   media: true,

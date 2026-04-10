@@ -11,11 +11,13 @@ import { usePerAppMixer } from "../../hooks/usePerAppMixer";
 import { useNotifications } from "../../hooks/useNotifications";
 import { useBattery } from "../../hooks/useBattery";
 import { usePrismAI } from "../../hooks/usePrismAI";
+import { useProductivity } from "../../hooks/useProductivity";
 import { useAppearance, hexToRgba } from "../../hooks/useAppearance";
 import { useSettings } from "../../hooks/useSettings";
 import { useAdaptivePolling } from "../../hooks/useAdaptivePolling";
 import { useScreenReader, useAnnounceListChange } from "../../hooks/useScreenReader";
 import { useDesktopGestures } from "../../hooks/useDesktopGestures";
+import { useWorkflowEvents } from "../../hooks/useWorkflowEvents";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
 import { BatteryIndicator } from "./modules/BatteryModule";
 import { springConfig, pillDimensions, bootAnimationDuration, idleSlotAnimations, getPillTargetStyle, type PillVisualState, PILL_DURATION_FAST, microInteractions } from "./animations";
@@ -23,20 +25,23 @@ import { TimerExpanded } from "./modules/TimerModule";
 import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
 import { PrismModule } from "./modules/PrismModule";
+import { ProductivityModule } from "./modules/ProductivityModule";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
 import { createFocusTrap } from "../../utils/focusTrap";
 import { tauriInvoke } from "../../lib/tauri";
 import { platformApi } from "../../lib/platform";
 import type { PrismAction } from "../../types/prism";
+import type { WorkflowActionEnvelope } from "../../types/workflows";
 import { createPillThemeTokens, resolveReducedMotion } from "./themeTokens";
 
 // Tab type for expanded view
-type ExpandedTab = "timer" | "media" | "notifications" | "settings" | "prism";
+type ExpandedTab = "timer" | "media" | "notifications" | "settings" | "prism" | "productivity";
 const EXPANDED_TAB_CONFIG: Array<{ id: ExpandedTab; label: string; icon: string; ariaLabel: string; hasBadge?: boolean }> = [
   { id: "timer", label: "Timer", icon: "⏱", ariaLabel: "Timer module" },
   { id: "media", label: "Media", icon: "🎵", ariaLabel: "Media controls" },
   { id: "notifications", label: "Notifs", icon: "🔔", ariaLabel: "Notifications", hasBadge: true },
   { id: "settings", label: "Settings", icon: "⚙", ariaLabel: "Settings" },
+  { id: "productivity", label: "Focus", icon: "✓", ariaLabel: "Productivity module" },
   { id: "prism", label: "Prism", icon: "AI", ariaLabel: "Prism AI assistant" },
 ];
 
@@ -198,6 +203,20 @@ export function Pill() {
     isCritical: isBatteryCritical,
   } = useBattery(60000); // Poll every 60s (battery changes slowly)
 
+  const {
+    state: productivity,
+    addTask,
+    toggleTask,
+    removeTask,
+    addNote,
+    updateNote,
+    removeNote,
+    addAgendaEvent,
+    clearCompletedTasks,
+    exportBackup,
+    importBackup,
+  } = useProductivity();
+
   // Appearance settings (mode, opacity, accent color)
   const appearance = useAppearance();
   const isNotch = appearance.active.mode === "notch";
@@ -261,6 +280,12 @@ export function Pill() {
     audioSessions,
     autoStartEnabled,
     battery,
+    productivitySummary: {
+      taskCount: productivity.tasks.length,
+      completedTaskCount: productivity.tasks.filter((task) => task.completed).length,
+      noteCount: productivity.notes.length,
+      upcomingEventCount: productivity.calendarEvents.filter((event) => event.startsAt >= Date.now()).length,
+    },
   });
 
   // Whether to show notification badge in the pill
@@ -639,6 +664,7 @@ export function Pill() {
         media: "Media",
         notifications: "Notifications",
         settings: "Settings",
+        productivity: "Productivity",
         prism: "Prism AI",
       };
       announce(`Switched to ${tabNames[activeTab]} tab`);
@@ -715,6 +741,26 @@ export function Pill() {
         case "media_previous":
           await mediaPrevious();
           return "Media previous sent.";
+        case "add_task": {
+          const title =
+            typeof args.title === "string" && args.title.trim()
+              ? args.title.trim().slice(0, 120)
+              : "";
+          if (!title) {
+            throw new Error("Invalid title for add_task.");
+          }
+          addTask(title);
+          return `Task added: ${title}`;
+        }
+        case "add_note": {
+          const title =
+            typeof args.title === "string" && args.title.trim()
+              ? args.title.trim().slice(0, 120)
+              : "Quick note";
+          const content = typeof args.content === "string" ? args.content.slice(0, 2000) : "";
+          addNote(title, content);
+          return `Note added: ${title}`;
+        }
         default:
           throw new Error(`Unsupported action type: ${action.type}`);
       }
@@ -722,6 +768,8 @@ export function Pill() {
     [
       mediaNext,
       mediaPrevious,
+      addNote,
+      addTask,
       pauseTimer,
       playPause,
       resumeTimer,
@@ -742,6 +790,55 @@ export function Pill() {
       runPrismAction(action).catch(() => {});
     });
   }, [prismActionMode, prismActions, setPrismActions, runPrismAction]);
+
+  const executeWorkflowAction = useCallback((action: WorkflowActionEnvelope) => {
+    const tabActionMap: Record<string, ExpandedTab> = {
+      open_timer_tab: "timer",
+      open_media_tab: "media",
+      open_notifications_tab: "notifications",
+      open_settings_tab: "settings",
+      open_prism_tab: "prism",
+      open_productivity_tab: "productivity",
+    };
+
+    if (action.id === "toggle_expand") {
+      handleClick();
+      return;
+    }
+
+    if (action.id === "quick_add_task") {
+      const rawTitle = typeof action.args?.title === "string" ? action.args.title : "Quick task";
+      const title = rawTitle.trim().slice(0, 120);
+      if (title) addTask(title);
+      if (!isExpanded) handleClick();
+      setActiveTab("productivity");
+      return;
+    }
+
+    const targetTab = tabActionMap[action.id];
+    if (!targetTab) return;
+    if (!isExpanded) handleClick();
+    setActiveTab(targetTab);
+  }, [addTask, handleClick, isExpanded]);
+
+  useWorkflowEvents(executeWorkflowAction);
+
+  const triggerWorkflowAction = useCallback(async (id: WorkflowActionEnvelope["id"], args?: Record<string, unknown>) => {
+    const envelope: WorkflowActionEnvelope = {
+      id,
+      args,
+      source: "ui",
+      timestamp: Date.now(),
+    };
+    try {
+      const dispatched = await platformApi.dispatchWorkflowAction(id, args);
+      if (dispatched === null) {
+        executeWorkflowAction(envelope);
+      }
+    } catch {
+      executeWorkflowAction(envelope);
+    }
+  }, [executeWorkflowAction]);
 
   // Handle click outside
   useEffect(() => {
@@ -1307,6 +1404,44 @@ export function Pill() {
                     />
                   </motion.div>
                 )}
+
+                {activeTab === "productivity" && (
+                  <motion.div
+                    key="productivity"
+                    id="panel-productivity"
+                    role="tabpanel"
+                    aria-labelledby="tab-productivity"
+                    className="w-full h-full min-h-0 flex flex-col overflow-y-auto"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: panelTransitionDuration }}
+                  >
+                    <ProductivityModule
+                      state={productivity}
+                      onAddTask={addTask}
+                      onToggleTask={toggleTask}
+                      onRemoveTask={removeTask}
+                      onClearCompleted={clearCompletedTasks}
+                      onAddNote={addNote}
+                      onUpdateNote={updateNote}
+                      onRemoveNote={removeNote}
+                      onAddEvent={addAgendaEvent}
+                      onExportBackup={async () => {
+                        const result = await exportBackup();
+                        announce(result?.valid ? "Productivity backup exported" : "Backup export needs attention");
+                      }}
+                      onPreviewImport={async () => {
+                        const result = await importBackup("preview");
+                        announce(result?.valid ? "Backup preview valid" : "Backup preview has conflicts");
+                      }}
+                      onApplyImport={async () => {
+                        const result = await importBackup("apply");
+                        announce(result?.valid ? "Backup applied" : "Backup apply blocked by conflicts");
+                      }}
+                    />
+                  </motion.div>
+                )}
               </AnimatePresence>
             </div>
 
@@ -1335,15 +1470,21 @@ export function Pill() {
               type="button"
               className="w-full text-left text-[11px] text-white/85 px-2 py-1 rounded hover:bg-white/10"
               onClick={() => {
-                if (isExpanded) {
-                  handleClickOutside();
-                } else {
-                  handleClick();
-                }
+                void triggerWorkflowAction("toggle_expand");
                 closeContextMenu();
               }}
             >
               {isExpanded ? "Collapse" : "Expand"}
+            </button>
+            <button
+              type="button"
+              className="w-full text-left text-[11px] text-white/85 px-2 py-1 rounded hover:bg-white/10"
+              onClick={() => {
+                void triggerWorkflowAction("open_productivity_tab");
+                closeContextMenu();
+              }}
+            >
+              Open productivity
             </button>
             {isExpanded && (
               <>

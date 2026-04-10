@@ -1,5 +1,6 @@
 import { tauriInvoke } from "../tauri";
 import { UNKNOWN_CAPABILITIES, type PlatformCapabilities } from "./types";
+import type { WorkflowActionId } from "../../types/workflows";
 
 let cachedCapabilities: PlatformCapabilities | null = null;
 
@@ -160,5 +161,8 @@ export const platformApi = {
   },
   async toggleMute() {
     return tauriInvoke<boolean>("toggle_mute");
+  },
+  async dispatchWorkflowAction(actionId: WorkflowActionId, args?: Record<string, unknown>) {
+    return tauriInvoke("dispatch_workflow_action", { actionId, args });
   },
 };

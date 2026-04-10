@@ -34,6 +34,7 @@ export interface LayoutSettingsData {
     notifications: boolean;
     settings: boolean;
     prism: boolean;
+    productivity: boolean;
   };
   idle_indicators: {
     media: boolean;
@@ -76,6 +77,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
       notifications: true,
       settings: true,
       prism: true,
+      productivity: true,
     },
     idle_indicators: {
       media: true,

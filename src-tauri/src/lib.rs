@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 mod platform;
+mod sync;
+mod workflows;
 
 /// Cached notification access status so we don't re-poll it on every get_notifications() call.
 static NOTIFICATION_ACCESS_GRANTED: AtomicBool = AtomicBool::new(false);
@@ -189,6 +191,40 @@ pub struct TimerSettingsData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutVisibleTabsData {
+    #[serde(default = "default_true")]
+    pub timer: bool,
+    #[serde(default = "default_true")]
+    pub media: bool,
+    #[serde(default = "default_true")]
+    pub notifications: bool,
+    #[serde(default = "default_true")]
+    pub settings: bool,
+    #[serde(default = "default_true")]
+    pub prism: bool,
+    #[serde(default = "default_true")]
+    pub productivity: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutIdleIndicatorsData {
+    #[serde(default = "default_true")]
+    pub media: bool,
+    #[serde(default = "default_true")]
+    pub battery: bool,
+    #[serde(default = "default_true")]
+    pub notifications: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutSettingsData {
+    #[serde(default)]
+    pub visible_tabs: LayoutVisibleTabsData,
+    #[serde(default)]
+    pub idle_indicators: LayoutIdleIndicatorsData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
     pub appearance: AppearanceSettingsData,
@@ -198,6 +234,8 @@ pub struct AppSettings {
     pub behavior: BehaviorSettingsData,
     #[serde(default)]
     pub timer: TimerSettingsData,
+    #[serde(default)]
+    pub layout: LayoutSettingsData,
 }
 
 fn default_mode() -> String { "island".to_string() }
@@ -206,6 +244,7 @@ fn default_accent_color() -> String { "#EB0028".to_string() }
 fn default_animation_speed() -> f64 { 1.0 }
 fn default_reduced_motion() -> String { "system".to_string() }
 fn default_custom_minutes() -> u32 { 25 }
+fn default_true() -> bool { true }
 
 impl Default for AppearanceSettingsData {
     fn default() -> Self {
@@ -227,6 +266,31 @@ impl Default for TimerSettingsData {
         Self { last_custom_label: String::new(), last_custom_minutes: default_custom_minutes() }
     }
 }
+impl Default for LayoutVisibleTabsData {
+    fn default() -> Self {
+        Self {
+            timer: true,
+            media: true,
+            notifications: true,
+            settings: true,
+            prism: true,
+            productivity: true,
+        }
+    }
+}
+impl Default for LayoutIdleIndicatorsData {
+    fn default() -> Self {
+        Self { media: true, battery: true, notifications: true }
+    }
+}
+impl Default for LayoutSettingsData {
+    fn default() -> Self {
+        Self {
+            visible_tabs: LayoutVisibleTabsData::default(),
+            idle_indicators: LayoutIdleIndicatorsData::default(),
+        }
+    }
+}
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -234,6 +298,7 @@ impl Default for AppSettings {
             motion: MotionSettingsData::default(),
             behavior: BehaviorSettingsData::default(),
             timer: TimerSettingsData::default(),
+            layout: LayoutSettingsData::default(),
         }
     }
 }
@@ -2488,6 +2553,118 @@ fn get_platform_capabilities() -> platform::PlatformCapabilities {
     platform::current_capabilities()
 }
 
+fn productivity_backup_path() -> std::path::PathBuf {
+    let app_data = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    std::path::Path::new(&app_data)
+        .join("PILLAR")
+        .join("productivity-backup.json")
+}
+
+fn parse_workflow_action_id(id: &str) -> Option<workflows::WorkflowActionId> {
+    match id {
+        "toggle_expand" => Some(workflows::WorkflowActionId::ToggleExpand),
+        "open_timer_tab" => Some(workflows::WorkflowActionId::OpenTimerTab),
+        "open_media_tab" => Some(workflows::WorkflowActionId::OpenMediaTab),
+        "open_notifications_tab" => Some(workflows::WorkflowActionId::OpenNotificationsTab),
+        "open_settings_tab" => Some(workflows::WorkflowActionId::OpenSettingsTab),
+        "open_prism_tab" => Some(workflows::WorkflowActionId::OpenPrismTab),
+        "open_productivity_tab" => Some(workflows::WorkflowActionId::OpenProductivityTab),
+        "quick_add_task" => Some(workflows::WorkflowActionId::QuickAddTask),
+        _ => None,
+    }
+}
+
+fn register_global_shortcuts(app: &tauri::AppHandle) {
+    let mappings = [
+        ("Alt+Shift+P", workflows::WorkflowActionId::OpenProductivityTab),
+        ("Alt+Shift+A", workflows::WorkflowActionId::OpenPrismTab),
+        ("Alt+Shift+Space", workflows::WorkflowActionId::ToggleExpand),
+    ];
+
+    for (shortcut, action) in mappings {
+        let _ = (&app, &action);
+        eprintln!(
+            "[PILLAR] Global shortcut mapping reserved: {} -> {:?} (no-op baseline)",
+            shortcut, action
+        );
+    }
+}
+
+fn validate_snapshot_internal(snapshot: &sync::ProductivitySnapshotEnvelope) -> sync::SyncValidationResult {
+    let adapter = sync::StubSyncAdapter;
+    sync::SyncAdapter::validate_snapshot(&adapter, snapshot)
+}
+
+#[tauri::command]
+fn validate_productivity_snapshot(
+    snapshot: sync::ProductivitySnapshotEnvelope,
+) -> Result<sync::SyncValidationResult, String> {
+    Ok(validate_snapshot_internal(&snapshot))
+}
+
+#[tauri::command]
+fn export_productivity_backup(
+    snapshot: sync::ProductivitySnapshotEnvelope,
+) -> Result<sync::SyncValidationResult, String> {
+    let validation = validate_snapshot_internal(&snapshot);
+    if !validation.valid {
+        return Ok(validation);
+    }
+
+    let path = productivity_backup_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(validation)
+}
+
+#[tauri::command]
+fn import_productivity_backup(apply: bool) -> Result<sync::ImportBackupResult, String> {
+    let path = productivity_backup_path();
+    if !path.exists() {
+        return Ok(sync::ImportBackupResult {
+            validation: sync::SyncValidationResult {
+                valid: false,
+                conflicts: vec![sync::SyncConflictInfo {
+                    reason: "validation_error".to_string(),
+                    message: "No productivity backup file found.".to_string(),
+                }],
+            },
+            snapshot: None,
+        });
+    }
+
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let snapshot: sync::ProductivitySnapshotEnvelope =
+        serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let validation = validate_snapshot_internal(&snapshot);
+    if !validation.valid {
+        return Ok(sync::ImportBackupResult {
+            validation,
+            snapshot: None,
+        });
+    }
+
+    Ok(sync::ImportBackupResult {
+        validation,
+        snapshot: if apply { Some(snapshot) } else { None },
+    })
+}
+
+#[tauri::command]
+fn dispatch_workflow_action(
+    app: tauri::AppHandle,
+    action_id: String,
+    args: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let id = parse_workflow_action_id(&action_id)
+        .ok_or_else(|| format!("Unknown workflow action: {}", action_id))?;
+    workflows::emit_action(&app, id, "ui", args);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -2543,6 +2720,12 @@ pub fn run() {
             // Settings persistence
             load_settings,
             save_settings,
+            // Productivity backup/sync skeleton
+            validate_productivity_snapshot,
+            export_productivity_backup,
+            import_productivity_backup,
+            // Workflow dispatch
+            dispatch_workflow_action,
             // Album art accent color
             extract_accent_color,
             // Media timeline & controls
@@ -2559,16 +2742,63 @@ pub fn run() {
             // Desktop-only UX (tray icon / window positioning). Mobile builds should skip this.
             #[cfg(desktop)]
             {
-                // System tray with Quit so the app can be closed (window has no title bar / taskbar)
+                // System tray routes through deterministic workflow IDs.
+                let expand_i = MenuItem::with_id(app, "workflow_toggle_expand", "Toggle Expand", true, None::<&str>)
+                    .map_err(|e| e.to_string())?;
+                let open_prod_i = MenuItem::with_id(app, "workflow_open_productivity", "Open Productivity", true, None::<&str>)
+                    .map_err(|e| e.to_string())?;
+                let open_prism_i = MenuItem::with_id(app, "workflow_open_prism", "Open Prism", true, None::<&str>)
+                    .map_err(|e| e.to_string())?;
+                let quick_task_i = MenuItem::with_id(app, "workflow_quick_task", "Quick Add Task", true, None::<&str>)
+                    .map_err(|e| e.to_string())?;
                 let quit_i = MenuItem::with_id(app, "quit", "Quit PILLAR", true, None::<&str>)
                     .map_err(|e| e.to_string())?;
-                let menu = Menu::with_items(app, &[&quit_i]).map_err(|e| e.to_string())?;
+                let menu = Menu::with_items(
+                    app,
+                    &[&expand_i, &open_prod_i, &open_prism_i, &quick_task_i, &quit_i],
+                )
+                .map_err(|e| e.to_string())?;
                 let mut tray_builder = TrayIconBuilder::new()
                     .menu(&menu)
                     .show_menu_on_left_click(true)
                     .on_menu_event(move |app, event| {
-                        if event.id.as_ref() == "quit" {
-                            app.exit(0);
+                        match event.id.as_ref() {
+                            "workflow_toggle_expand" => {
+                                workflows::emit_action(
+                                    app,
+                                    workflows::WorkflowActionId::ToggleExpand,
+                                    "tray",
+                                    None,
+                                );
+                            }
+                            "workflow_open_productivity" => {
+                                workflows::emit_action(
+                                    app,
+                                    workflows::WorkflowActionId::OpenProductivityTab,
+                                    "tray",
+                                    None,
+                                );
+                            }
+                            "workflow_open_prism" => {
+                                workflows::emit_action(
+                                    app,
+                                    workflows::WorkflowActionId::OpenPrismTab,
+                                    "tray",
+                                    None,
+                                );
+                            }
+                            "workflow_quick_task" => {
+                                workflows::emit_action(
+                                    app,
+                                    workflows::WorkflowActionId::QuickAddTask,
+                                    "tray",
+                                    Some(serde_json::json!({ "title": "Tray quick task" })),
+                                );
+                            }
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            _ => {}
                         }
                     });
 
@@ -2579,6 +2809,8 @@ pub fn run() {
                 let _tray = tray_builder
                     .build(app)
                     .map_err(|e| e.to_string())?;
+
+                register_global_shortcuts(&app.handle());
 
                 // Window positioning is a desktop API; ignore failures.
                 if let Some(window) = app.get_webview_window("main") {
