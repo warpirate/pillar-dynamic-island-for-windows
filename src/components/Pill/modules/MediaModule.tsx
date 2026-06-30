@@ -135,14 +135,50 @@ function SeekBar({ timeline, accentColor, onSeek }: SeekBarProps) {
     ? dragPosition * timeline.durationMs
     : timeline.positionMs;
 
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (!timeline.canSeek) return;
+      let next: number | null = null;
+      switch (e.key) {
+        case "ArrowRight":
+        case "ArrowUp":
+          next = timeline.positionMs + 5000;
+          break;
+        case "ArrowLeft":
+        case "ArrowDown":
+          next = timeline.positionMs - 5000;
+          break;
+        case "Home":
+          next = 0;
+          break;
+        case "End":
+          next = timeline.durationMs;
+          break;
+        default:
+          return;
+      }
+      e.preventDefault();
+      onSeek(Math.max(0, Math.min(timeline.durationMs, next)));
+    },
+    [timeline.canSeek, timeline.positionMs, timeline.durationMs, onSeek]
+  );
+
   return (
     <div className="flex flex-col gap-1 w-full px-1">
       <div
         ref={barRef}
         className="relative h-1.5 bg-white/15 rounded-full cursor-pointer group"
+        role="slider"
+        aria-label="Seek"
+        aria-valuemin={0}
+        aria-valuemax={timeline.durationMs}
+        aria-valuenow={displayPosition}
+        aria-valuetext={formatTime(displayPosition)}
+        tabIndex={timeline.canSeek ? 0 : -1}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onKeyDown={handleKeyDown}
         style={gpuLayerHints.transform}
       >
         <div

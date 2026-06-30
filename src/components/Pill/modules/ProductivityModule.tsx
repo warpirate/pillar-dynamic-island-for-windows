@@ -5,6 +5,21 @@ import { microInteractions } from "../animations";
 
 type ProductivityView = "tasks" | "notes" | "agenda";
 
+const VIEW_LABELS = { tasks: "Tasks", notes: "Notes", agenda: "Agenda" } as const;
+
+function statusLabel(status: ProductivityState["status"]): string | null {
+  switch (status) {
+    case "loading":
+      return "Working…";
+    case "conflict":
+      return "Sync conflict";
+    case "degraded":
+      return "Backup unavailable";
+    default:
+      return null;
+  }
+}
+
 interface ProductivityModuleProps {
   state: ProductivityState;
   onAddTask: (title: string) => void;
@@ -41,7 +56,54 @@ export function ProductivityModule({
   const [eventTitle, setEventTitle] = useState("");
   const [eventStart, setEventStart] = useState("");
   const [eventEnd, setEventEnd] = useState("");
+  const [eventError, setEventError] = useState("");
+  const [pendingRemoveTaskId, setPendingRemoveTaskId] = useState<string | null>(null);
+  const [pendingRemoveNoteId, setPendingRemoveNoteId] = useState<string | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const completedCount = useMemo(() => state.tasks.filter((t) => t.completed).length, [state.tasks]);
+
+  const handleRemoveTaskClick = (taskId: string) => {
+    if (pendingRemoveTaskId === taskId) {
+      setPendingRemoveTaskId(null);
+      onRemoveTask(taskId);
+      return;
+    }
+    setPendingRemoveTaskId(taskId);
+    window.setTimeout(() => {
+      setPendingRemoveTaskId((current) => (current === taskId ? null : current));
+    }, 3000);
+  };
+
+  const handleRemoveNoteClick = (noteId: string) => {
+    if (pendingRemoveNoteId === noteId) {
+      setPendingRemoveNoteId(null);
+      onRemoveNote(noteId);
+      return;
+    }
+    setPendingRemoveNoteId(noteId);
+    window.setTimeout(() => {
+      setPendingRemoveNoteId((current) => (current === noteId ? null : current));
+    }, 3000);
+  };
+
+  const handleEditNote = (note: NoteItem) => {
+    setEditingNoteId(note.id);
+    setNoteTitle(note.title);
+    setNoteContent(note.content);
+    setView("notes");
+  };
+
+  const handleSaveNote = () => {
+    const editingNote = editingNoteId ? state.notes.find((n) => n.id === editingNoteId) : undefined;
+    if (editingNote) {
+      onUpdateNote({ ...editingNote, title: noteTitle, content: noteContent });
+    } else {
+      onAddNote(noteTitle, noteContent);
+    }
+    setEditingNoteId(null);
+    setNoteTitle("");
+    setNoteContent("");
+  };
 
   return (
     <div className="flex flex-col gap-2 h-full min-h-0">
@@ -54,11 +116,11 @@ export function ProductivityModule({
               className={`px-2 py-0.5 text-[10px] rounded ${view === id ? "bg-white/20 text-white" : "text-white/70"}`}
               onClick={() => setView(id)}
             >
-              {id}
+              {VIEW_LABELS[id]}
             </button>
           ))}
         </div>
-        <span className="text-[10px] text-white/60 uppercase">{state.status}</span>
+        {statusLabel(state.status) && <span className="text-[10px] text-white/60">{statusLabel(state.status)}</span>}
       </div>
 
       {view === "tasks" && (
@@ -72,7 +134,8 @@ export function ProductivityModule({
             />
             <button
               type="button"
-              className="px-2 py-1 rounded bg-white/20 text-[11px] text-white"
+              disabled={!taskInput.trim()}
+              className="px-2 py-1 rounded bg-white/20 text-[11px] text-white disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={() => {
                 onAddTask(taskInput);
                 setTaskInput("");
@@ -96,8 +159,13 @@ export function ProductivityModule({
                 <span className={`text-[12px] flex-1 ${task.completed ? "line-through text-white/45" : "text-white/85"}`}>
                   {task.title}
                 </span>
-                <button type="button" className="text-[10px] text-white/60 hover:text-white" onClick={() => onRemoveTask(task.id)}>
-                  remove
+                <button
+                  type="button"
+                  className={`text-[10px] hover:text-white ${pendingRemoveTaskId === task.id ? "text-red-300" : "text-white/60"}`}
+                  onClick={() => handleRemoveTaskClick(task.id)}
+                  onBlur={() => setPendingRemoveTaskId((current) => (current === task.id ? null : current))}
+                >
+                  {pendingRemoveTaskId === task.id ? "confirm?" : "remove"}
                 </button>
               </motion.div>
             ))}
@@ -112,24 +180,23 @@ export function ProductivityModule({
             value={noteTitle}
             onChange={(e) => setNoteTitle(e.target.value)}
             placeholder="Note title..."
+            maxLength={120}
             className="bg-white/10 text-white text-[12px] rounded px-2 py-1 outline-none"
           />
           <textarea
             value={noteContent}
             onChange={(e) => setNoteContent(e.target.value)}
             placeholder="Write note..."
+            maxLength={2000}
             className="bg-white/10 text-white text-[12px] rounded px-2 py-1 outline-none min-h-[64px]"
           />
           <button
             type="button"
-            className="px-2 py-1 rounded bg-white/20 text-[11px] text-white self-start"
-            onClick={() => {
-              onAddNote(noteTitle, noteContent);
-              setNoteTitle("");
-              setNoteContent("");
-            }}
+            disabled={!noteTitle.trim()}
+            className="px-2 py-1 rounded bg-white/20 text-[11px] text-white self-start disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleSaveNote}
           >
-            Save note
+            {editingNoteId ? "Update note" : "Save note"}
           </button>
           <div className="overflow-y-auto flex-1 min-h-0 space-y-1">
             {state.notes.map((note) => (
@@ -140,12 +207,17 @@ export function ProductivityModule({
                     <button
                       type="button"
                       className="text-[10px] text-white/60 hover:text-white"
-                      onClick={() => onUpdateNote({ ...note, content: `${note.content}\n` })}
+                      onClick={() => handleEditNote(note)}
                     >
-                      touch
+                      Edit
                     </button>
-                    <button type="button" className="text-[10px] text-white/60 hover:text-white" onClick={() => onRemoveNote(note.id)}>
-                      remove
+                    <button
+                      type="button"
+                      className={`text-[10px] hover:text-white ${pendingRemoveNoteId === note.id ? "text-red-300" : "text-white/60"}`}
+                      onClick={() => handleRemoveNoteClick(note.id)}
+                      onBlur={() => setPendingRemoveNoteId((current) => (current === note.id ? null : current))}
+                    >
+                      {pendingRemoveNoteId === note.id ? "confirm?" : "remove"}
                     </button>
                   </div>
                 </div>
@@ -166,21 +238,30 @@ export function ProductivityModule({
             className="bg-white/10 text-white text-[12px] rounded px-2 py-1 outline-none"
           />
           <div className="grid grid-cols-2 gap-1">
-            <input value={eventStart} onChange={(e) => setEventStart(e.target.value)} type="datetime-local" className="bg-white/10 text-white text-[11px] rounded px-2 py-1 outline-none" />
-            <input value={eventEnd} onChange={(e) => setEventEnd(e.target.value)} type="datetime-local" className="bg-white/10 text-white text-[11px] rounded px-2 py-1 outline-none" />
+            <input required value={eventStart} onChange={(e) => setEventStart(e.target.value)} type="datetime-local" className="bg-white/10 text-white text-[11px] rounded px-2 py-1 outline-none" />
+            <input required value={eventEnd} onChange={(e) => setEventEnd(e.target.value)} type="datetime-local" className="bg-white/10 text-white text-[11px] rounded px-2 py-1 outline-none" />
           </div>
           <button
             type="button"
-            className="px-2 py-1 rounded bg-white/20 text-[11px] text-white self-start"
+            disabled={!eventTitle.trim() || !eventStart || !eventEnd}
+            className="px-2 py-1 rounded bg-white/20 text-[11px] text-white self-start disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={() => {
               const startsAt = Date.parse(eventStart);
               const endsAt = Date.parse(eventEnd);
+              if (!eventTitle.trim() || Number.isNaN(startsAt) || Number.isNaN(endsAt) || endsAt <= startsAt) {
+                setEventError("Pick a start and end time; end must be after start.");
+                return;
+              }
               onAddEvent(eventTitle, startsAt, endsAt);
+              setEventError("");
               setEventTitle("");
+              setEventStart("");
+              setEventEnd("");
             }}
           >
             Add event
           </button>
+          {eventError && <div className="text-[10px] text-red-300">{eventError}</div>}
           <div className="overflow-y-auto flex-1 min-h-0 space-y-1">
             {state.calendarEvents.map((event) => (
               <div key={event.id} className="bg-white/8 rounded px-2 py-1.5 text-[11px]">

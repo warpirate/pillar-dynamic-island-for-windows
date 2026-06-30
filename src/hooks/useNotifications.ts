@@ -245,10 +245,30 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
     try {
       const raw = localStorage.getItem(NOTIFICATION_HISTORY_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as SystemNotification[];
-      if (Array.isArray(parsed)) {
-        setHistory(parsed.slice(0, MAX_NOTIFICATION_HISTORY));
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      // Validate per-item shape so a corrupt entry doesn't crash list rendering.
+      const valid: SystemNotification[] = [];
+      for (const item of parsed) {
+        if (!item || typeof item !== "object") continue;
+        const n = item as Record<string, unknown>;
+        if (
+          typeof n.id !== "number" ||
+          typeof n.appName !== "string" ||
+          typeof n.title !== "string" ||
+          typeof n.body !== "string" ||
+          typeof n.timestamp !== "number"
+        ) continue;
+        valid.push({
+          id: n.id,
+          appName: n.appName,
+          title: n.title,
+          body: n.body,
+          timestamp: n.timestamp,
+          aumid: typeof n.aumid === "string" ? n.aumid : undefined,
+        });
       }
+      setHistory(valid.slice(0, MAX_NOTIFICATION_HISTORY));
     } catch {
       // ignore malformed history cache
     }
@@ -285,73 +305,80 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
 
   // Real-time: listen for Windows notification events from backend; fallback poll as backup
   useEffect(() => {
-    let isMounted = true;
+    // Re-arm on every effect setup so a previous cleanup doesn't keep the hook dead.
+    isMountedRef.current = true;
 
-    if (isMounted) fetchNotifications();
+    fetchNotifications();
     startPolling();
 
-    if (isMounted) {
-      // Listen for intercepted notifications (instant: backend already read content & dismissed from Windows)
-      listen<{
-        id: number;
-        app_name: string;
-        title: string;
-        body: string;
-        timestamp: number;
-        aumid: string | null;
-      }>("notification-added", (event) => {
-        if (!isMounted) return;
-        const n = event.payload;
-        const mapped: SystemNotification = {
-          id: n.id,
-          appName: n.app_name,
-          title: n.title,
-          body: n.body,
-          timestamp: n.timestamp,
-          aumid: n.aumid ?? undefined,
-        };
+    // Listen for intercepted notifications (instant: backend already read content & dismissed from Windows).
+    // If the listen() promise resolves AFTER cleanup ran, call the returned unlisten immediately
+    // so we don't leak a dangling subscription.
+    listen<{
+      id: number;
+      app_name: string;
+      title: string;
+      body: string;
+      timestamp: number;
+      aumid: string | null;
+    }>("notification-added", (event) => {
+      if (!isMountedRef.current) return;
+      const n = event.payload;
+      const mapped: SystemNotification = {
+        id: n.id,
+        appName: n.app_name,
+        title: n.title,
+        body: n.body,
+        timestamp: n.timestamp,
+        aumid: n.aumid ?? undefined,
+      };
 
-        // Add to notifications list (dedupe by ID, prepend)
-        setNotifications(prev => {
-          if (prev.some(p => p.id === mapped.id)) return prev;
-          return [mapped, ...prev].slice(0, 10);
-        });
-        upsertHistory([mapped]);
+      // Add to notifications list (dedupe by ID, prepend)
+      setNotifications(prev => {
+        if (prev.some(p => p.id === mapped.id)) return prev;
+        return [mapped, ...prev].slice(0, 10);
+      });
+      upsertHistory([mapped]);
 
-        // Trigger toast animation if truly new
-        if (mapped.id !== lastSeenIdRef.current) {
-          triggerNotificationAnimation(mapped);
-        }
-      }).then((fn) => {
-        if (isMounted) unlistenAddedRef.current = fn;
-      }).catch(() => {});
+      // Trigger toast animation if truly new
+      if (mapped.id !== lastSeenIdRef.current) {
+        triggerNotificationAnimation(mapped);
+      }
+    }).then((fn) => {
+      if (!isMountedRef.current) {
+        fn();
+        return;
+      }
+      unlistenAddedRef.current = fn;
+    }).catch(() => {});
 
-      // Fallback: generic change event (for removals, or if interception failed)
-      listen("notification-changed", () => {
-        if (isMounted) fetchNotifications();
-      }).then((fn) => {
-        if (isMounted) unlistenChangedRef.current = fn;
-      }).catch(() => {});
-    }
+    // Fallback: generic change event (for removals, or if interception failed)
+    listen("notification-changed", () => {
+      if (!isMountedRef.current) return;
+      fetchNotifications();
+    }).then((fn) => {
+      if (!isMountedRef.current) {
+        fn();
+        return;
+      }
+      unlistenChangedRef.current = fn;
+    }).catch(() => {});
 
     const onVisibilityChange = () => {
-      if (!isMounted) return;
+      if (!isMountedRef.current) return;
 
       if (document.hidden) {
         stopPolling();
       } else {
         resetIdleTimer();
-        if (isMounted) fetchNotifications();
+        fetchNotifications();
         startPolling();
       }
     };
 
-    if (isMounted) {
-      document.addEventListener("visibilitychange", onVisibilityChange);
-    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      isMounted = false;
       isMountedRef.current = false;
       stopPolling();
       if (latestTimeoutRef.current) clearTimeout(latestTimeoutRef.current);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { tauriInvoke } from "../lib/tauri";
 import {
   createCalendarEvent,
@@ -36,6 +36,10 @@ function withUpdatedState(prev: ProductivityState, patch: Partial<ProductivitySt
 
 export function useProductivity(): UseProductivityReturn {
   const [state, setState] = useState<ProductivityState>(() => loadProductivityState());
+  // Mirror state into a ref so async callbacks can read the latest snapshot
+  // without being included in their deps (and re-created on every keystroke).
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     saveProductivityState(state);
@@ -96,7 +100,9 @@ export function useProductivity(): UseProductivityReturn {
 
   const exportBackup = useCallback(async () => {
     setState((prev) => ({ ...prev, status: "loading" }));
-    const snapshot = toProductivitySnapshot(state);
+    // Read latest state via ref so the callback identity stays stable across
+    // every keystroke — otherwise downstream memoized consumers thrash.
+    const snapshot = toProductivitySnapshot(stateRef.current);
     try {
       const result = await tauriInvoke<SyncValidationResult>("export_productivity_backup", { snapshot });
       setState((prev) => ({ ...prev, status: result?.valid ? "idle" : "conflict" }));
@@ -105,7 +111,7 @@ export function useProductivity(): UseProductivityReturn {
       setState((prev) => ({ ...prev, status: "degraded" }));
       return null;
     }
-  }, [state]);
+  }, []);
 
   const importBackup = useCallback(async (mode: "preview" | "apply") => {
     setState((prev) => ({ ...prev, status: "loading" }));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // =============================================================================
 // Types
@@ -37,13 +37,26 @@ const DEFAULT_CONFIG: AdaptivePollingConfig = {
 export function useAdaptivePolling(
   config: Partial<AdaptivePollingConfig> = {}
 ): UseAdaptivePollingReturn {
-  const fullConfig = { ...DEFAULT_CONFIG, ...config };
-  
+  // Stabilize config by individual fields so an inline `config = {}` literal doesn't
+  // re-create `fullConfig` (and the downstream `getCurrentInterval` callback) every render.
+  const {
+    baseInterval,
+    activeInterval,
+    idleThreshold,
+    deepSleepInterval,
+    deepSleepThreshold,
+  } = { ...DEFAULT_CONFIG, ...config };
+  const fullConfig = useMemo<AdaptivePollingConfig>(
+    () => ({ baseInterval, activeInterval, idleThreshold, deepSleepInterval, deepSleepThreshold }),
+    [baseInterval, activeInterval, idleThreshold, deepSleepInterval, deepSleepThreshold]
+  );
+
   const [activityLevel, setActivityLevel] = useState<ActivityLevel>("idle");
   const [isDeepSleep, setIsDeepSleep] = useState(false);
-  
+
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepSleepTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const decayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
   const activityCountRef = useRef<number>(0);
   
@@ -95,9 +108,11 @@ export function useAdaptivePolling(
       setActivityLevel("idle");
     }
     
-    // Decay activity count over time
-    setTimeout(() => {
+    // Decay activity count over time (track timer so it cleans up on unmount)
+    if (decayTimerRef.current) clearTimeout(decayTimerRef.current);
+    decayTimerRef.current = setTimeout(() => {
       activityCountRef.current = Math.max(0, activityCountRef.current - 1);
+      decayTimerRef.current = null;
     }, 5000);
     
     // Set idle timer
@@ -129,12 +144,9 @@ export function useAdaptivePolling(
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (idleTimerRef.current) {
-        clearTimeout(idleTimerRef.current);
-      }
-      if (deepSleepTimerRef.current) {
-        clearTimeout(deepSleepTimerRef.current);
-      }
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      if (deepSleepTimerRef.current) clearTimeout(deepSleepTimerRef.current);
+      if (decayTimerRef.current) clearTimeout(decayTimerRef.current);
     };
   }, []);
   

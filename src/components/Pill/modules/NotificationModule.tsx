@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useMemo, useCallback, useState } from "react";
 import type { SystemNotification } from "../../../hooks/useNotifications";
-import { notificationAnimations, microInteractions, PILL_DURATION_FAST, gpuLayerHints } from "../animations";
+import { notificationAnimations, microInteractions, PILL_DURATION_FAST, gpuLayerHints, prefersReducedMotion } from "../animations";
 
 // =============================================================================
 // Shared Utilities
@@ -215,8 +215,9 @@ function ToastCard({
           `0 2px 8px rgba(0,0,0,0.3)`,
           `0 0 20px rgba(${accent.rgb}, 0.08)`,
         ].join(", "),
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
+        // No backdrop-filter: the gradient above is ~94-97% opaque so a blur is
+        // near-invisible, and animating scale on a backdrop-filter element forces a
+        // per-frame blur re-sample. Dropping it removes that cost on every toast.
       }}
       onClick={(e) => {
         e.stopPropagation();
@@ -226,9 +227,14 @@ function ToastCard({
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
           e.stopPropagation();
           onActivate?.(notification.id);
+          onDismiss();
+        } else if (e.key === "Delete" || e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
           onDismiss();
         }
       }}
@@ -314,8 +320,9 @@ function ToastCard({
 
         {/* Dismiss X button */}
         <motion.button
-          className="w-5 h-5 rounded-full flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors flex-shrink-0 mt-0.5"
+          className="min-w-[32px] min-h-[32px] -mr-1.5 -mt-1 rounded-full flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors flex-shrink-0"
           aria-label="Dismiss notification"
+          tabIndex={0}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
@@ -325,12 +332,13 @@ function ToastCard({
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
               e.stopPropagation();
               onDismiss();
             }
           }}
         >
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
           </svg>
         </motion.button>
@@ -339,13 +347,15 @@ function ToastCard({
       {/* Auto-dismiss progress bar */}
       {phase === "incoming" && (
         <motion.div
-          className="absolute bottom-0 left-0 h-[2px] rounded-full"
+          className="absolute bottom-0 left-0 h-[2px] w-full rounded-full"
           style={{
+            transformOrigin: "left",
             background: `linear-gradient(90deg, rgba(${accent.rgb}, 0.6), rgba(${accent.rgb}, 0.2))`,
           }}
-          initial={{ width: "100%" }}
-          animate={{ width: "0%" }}
-          transition={{ duration: 3.5, ease: "linear" }}
+          // scaleX (compositor-only) instead of animating width (layout+paint each frame).
+          initial={{ scaleX: 1 }}
+          animate={prefersReducedMotion ? { scaleX: 1 } : { scaleX: 0 }}
+          transition={prefersReducedMotion ? { duration: 0 } : { duration: 3.5, ease: "linear" }}
         />
       )}
     </div>
@@ -391,6 +401,9 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           handleActivate();
+        } else if (e.key === "Delete" || e.key === "Escape") {
+          e.preventDefault();
+          void onDismiss(notification.id);
         }
       }}
       role="button"
@@ -434,8 +447,9 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
 
         {/* Dismiss button */}
         <motion.button
-          className="w-4 h-4 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-          aria-label={`Dismiss notification from ${notification.appName}`}
+          className="min-w-[32px] min-h-[32px] -mr-1 -mt-1 rounded flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-colors flex-shrink-0"
+          aria-label="Dismiss notification"
+          tabIndex={0}
           onClick={(e) => {
             e.stopPropagation();
             onDismiss(notification.id);
@@ -449,7 +463,7 @@ export function NotificationCard({ notification, onDismiss, onActivate }: Notifi
           }}
           {...microInteractions.icon}
         >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
           </svg>
         </motion.button>

@@ -60,6 +60,10 @@ export function useMediaSession(
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  // Tracks setTimeout handles for the "fetch shortly after a media action" refreshes.
+  // We need to clear these on unmount so they don't fire a setState after the component is gone.
+  const pendingActionTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
   const onMediaChangeRef = useRef(onMediaChange);
   onMediaChangeRef.current = onMediaChange;
   const { handleError, clearError } = useGracefulDegradation({
@@ -78,10 +82,12 @@ export function useMediaSession(
 
   // Fetch media session info (with in-flight guard to prevent overlapping requests)
   const fetchMedia = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (isPendingRef.current) return; // Skip if previous request still in-flight
     isPendingRef.current = true;
     try {
       const caps = await platformApi.getCapabilities();
+      if (!isMountedRef.current) return;
       if (!caps.mediaSession) {
         setMedia(null);
         setTimeline(null);
@@ -90,6 +96,7 @@ export function useMediaSession(
         return;
       }
       const result = await platformApi.getMediaSession();
+      if (!isMountedRef.current) return;
 
       // Transform snake_case to camelCase
       const transformed = result
@@ -152,7 +159,16 @@ export function useMediaSession(
   const refresh = useCallback(async () => {
     setIsLoading(true);
     await fetchMedia();
-    setIsLoading(false);
+    if (isMountedRef.current) setIsLoading(false);
+  }, [fetchMedia]);
+
+  // Schedule a tracked refetch after a media-control action so we don't leak setTimeouts on unmount.
+  const scheduleActionRefetch = useCallback((delayMs: number) => {
+    const handle = setTimeout(() => {
+      pendingActionTimeoutsRef.current.delete(handle);
+      if (isMountedRef.current) fetchMedia();
+    }, delayMs);
+    pendingActionTimeoutsRef.current.add(handle);
   }, [fetchMedia]);
 
   // Media controls
@@ -165,9 +181,9 @@ export function useMediaSession(
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to toggle play/pause");
     }
-    setTimeout(fetchMedia, 100);
+    scheduleActionRefetch(100);
     triggerActivity(); // Mark user as active
-  }, [clearError, fetchMedia, handleError, triggerActivity]);
+  }, [clearError, handleError, scheduleActionRefetch, triggerActivity]);
 
   const next = useCallback(async () => {
     try {
@@ -178,9 +194,9 @@ export function useMediaSession(
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to skip next");
     }
-    setTimeout(fetchMedia, 100);
+    scheduleActionRefetch(100);
     triggerActivity(); // Mark user as active
-  }, [clearError, fetchMedia, handleError, triggerActivity]);
+  }, [clearError, handleError, scheduleActionRefetch, triggerActivity]);
 
   const previous = useCallback(async () => {
     try {
@@ -191,9 +207,9 @@ export function useMediaSession(
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to go previous");
     }
-    setTimeout(fetchMedia, 100);
+    scheduleActionRefetch(100);
     triggerActivity(); // Mark user as active
-  }, [clearError, fetchMedia, handleError, triggerActivity]);
+  }, [clearError, handleError, scheduleActionRefetch, triggerActivity]);
 
   const toggleRepeat = useCallback(async () => {
     try {
@@ -204,9 +220,9 @@ export function useMediaSession(
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to toggle repeat");
     }
-    setTimeout(fetchMedia, 100);
+    scheduleActionRefetch(100);
     triggerActivity(); // Mark user as active
-  }, [clearError, fetchMedia, handleError, triggerActivity]);
+  }, [clearError, handleError, scheduleActionRefetch, triggerActivity]);
 
   const toggleShuffle = useCallback(async () => {
     try {
@@ -217,9 +233,9 @@ export function useMediaSession(
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to toggle shuffle");
     }
-    setTimeout(fetchMedia, 100);
+    scheduleActionRefetch(100);
     triggerActivity(); // Mark user as active
-  }, [clearError, fetchMedia, handleError, triggerActivity]);
+  }, [clearError, handleError, scheduleActionRefetch, triggerActivity]);
 
   const seekTo = useCallback(async (positionMs: number) => {
     try {
@@ -230,9 +246,9 @@ export function useMediaSession(
     } catch (e) {
       handleError("media_controls", e instanceof Error ? e : "Failed to seek media");
     }
-    setTimeout(fetchMedia, 150);
+    scheduleActionRefetch(150);
     triggerActivity(); // Mark user as active
-  }, [clearError, fetchMedia, handleError, triggerActivity]);
+  }, [clearError, handleError, scheduleActionRefetch, triggerActivity]);
 
   const pauseOtherSessions = useCallback(async () => {
     try {
@@ -248,11 +264,16 @@ export function useMediaSession(
 
   // Start polling when mounted
   useEffect(() => {
+    // Re-arm on every effect setup so a previous cleanup doesn't keep the hook dead.
+    isMountedRef.current = true;
+
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (!isDeepSleep) {
         const interval = getCurrentInterval();
-        pollIntervalRef.current = setInterval(fetchMedia, interval);
+        pollIntervalRef.current = setInterval(() => {
+          if (isMountedRef.current) fetchMedia();
+        }, interval);
       }
     };
 
@@ -264,11 +285,12 @@ export function useMediaSession(
     };
 
     const onVisibilityChange = () => {
+      if (!isMountedRef.current) return;
       if (document.hidden) {
         stopPolling();
       } else {
         fetchMedia();
-        resetIdleTimer(); // Reset idle timer when becoming visible
+        resetIdleTimer();
         startPolling();
       }
     };
@@ -278,8 +300,12 @@ export function useMediaSession(
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
+      isMountedRef.current = false;
       stopPolling();
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      // Cancel any pending action-refetch timeouts so they don't fire post-unmount.
+      pendingActionTimeoutsRef.current.forEach((handle) => clearTimeout(handle));
+      pendingActionTimeoutsRef.current.clear();
     };
   }, [fetchMedia, getCurrentInterval, isDeepSleep, resetIdleTimer]);
 

@@ -29,6 +29,7 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
   
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
+  const isMountedRef = useRef(true);
   
   // Adaptive polling for reduced CPU usage
   const { isDeepSleep, triggerActivity, getCurrentInterval, resetIdleTimer } = useAdaptivePolling({
@@ -41,10 +42,12 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
 
   // Fetch volume info (with in-flight guard)
   const fetchVolume = useCallback(async () => {
+    if (!isMountedRef.current) return;
     if (isPendingRef.current) return;
     isPendingRef.current = true;
     try {
       const result = await platformApi.getSystemVolume();
+      if (!isMountedRef.current) return;
       if (result) {
         setVolumeState({
           level: result.level,
@@ -83,14 +86,15 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
 
   // Start polling when mounted
   useEffect(() => {
-    let isMounted = true;
-    
+    // Re-arm on every effect setup so a previous cleanup doesn't keep the hook dead.
+    isMountedRef.current = true;
+
     const startPolling = () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      if (isMounted && !isDeepSleep) {
+      if (!isDeepSleep) {
         const interval = getCurrentInterval();
         pollIntervalRef.current = setInterval(() => {
-          if (isMounted) fetchVolume();
+          if (isMountedRef.current) fetchVolume();
         }, interval);
       }
     };
@@ -103,28 +107,23 @@ export function useVolume(pollInterval = 5000): UseVolumeReturn {
     };
 
     const handleVisibilityChange = () => {
-      if (!isMounted) return;
-      
+      if (!isMountedRef.current) return;
+
       if (document.hidden) {
         stopPolling();
       } else {
-        if (isMounted) {
-          fetchVolume();
-          resetIdleTimer(); // Reset idle timer when becoming visible
-          startPolling();
-        }
+        fetchVolume();
+        resetIdleTimer();
+        startPolling();
       }
     };
 
-    if (isMounted) fetchVolume();
+    fetchVolume();
     startPolling();
-    
-    if (isMounted) {
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };

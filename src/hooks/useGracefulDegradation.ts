@@ -51,6 +51,10 @@ export function useGracefulDegradation(
   const [featureStates, setFeatureStates] = useState<Map<string, FeatureState>>(new Map());
   const [isOnline, setIsOnline] = useState(true);
   const retryTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Mirror of featureStates so callbacks can read the latest snapshot without
+  // depending on the state (which would re-create handleError on every render).
+  const featureStatesRef = useRef(featureStates);
+  featureStatesRef.current = featureStates;
 
   // Check online status
   useEffect(() => {
@@ -105,30 +109,36 @@ export function useGracefulDegradation(
     error: Error | string
   ) => {
     const errorMessage = typeof error === "string" ? error : error.message;
-    const currentState = getFeatureStatus(featureName);
-    
+    // Read directly from the ref so we always see the latest retry count rather
+    // than the snapshot captured when this callback was last created.
+    const currentState = featureStatesRef.current.get(featureName) ?? {
+      status: "checking" as FeatureStatus,
+      lastChecked: Date.now(),
+      retryCount: 0,
+    };
+
     // If we haven't exceeded max retries, mark as degraded and schedule retry
     if (currentState.retryCount < maxRetries) {
       setFeatureStatus(featureName, "degraded", errorMessage);
-      
+
       // Clear any existing retry timeout
       const existingTimeout = retryTimeoutsRef.current.get(featureName);
       if (existingTimeout) {
         clearTimeout(existingTimeout);
       }
-      
+
       // Schedule retry with exponential backoff
       const backoffDelay = retryDelay * Math.pow(2, currentState.retryCount);
       const timeoutId = setTimeout(() => {
         retryFeature(featureName);
       }, backoffDelay);
-      
+
       retryTimeoutsRef.current.set(featureName, timeoutId);
     } else {
       // Max retries exceeded, mark as unavailable
       setFeatureStatus(featureName, "unavailable", errorMessage);
     }
-  }, [getFeatureStatus, maxRetries, retryDelay]);
+  }, [maxRetries, retryDelay, setFeatureStatus]);
 
   // Clear error and reset status
   const clearError = useCallback((featureName: string) => {

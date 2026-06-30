@@ -19,6 +19,23 @@ const STATE_COLORS: Record<string, string> = {
   notification: "#f59e0b",  // Amber
 };
 
+// Accessible labels (WCAG 1.4.1) so state is not conveyed by color alone.
+const STATE_LABELS: Record<string, string> = {
+  timer_running: "Timer running",
+  timer_alert: "Timer finished",
+  media: "Media playing",
+  notification: "Notification pending",
+};
+
+// Non-color visual cue per state: shape/size tweaks layered on the base dot so
+// colorblind users can still tell the four states apart without relying on hue.
+const STATE_SHAPES: Record<string, string> = {
+  timer_running: "rounded-full",            // Green: round dot (default)
+  timer_alert: "rounded-full",              // Red: round dot + pulse (see animate)
+  media: "rounded-full scale-75",           // Blue: smaller round dot
+  notification: "rounded-none ring-1 ring-white/40", // Amber: square with ring
+};
+
 export function StateIndicators({ states, position = "right" }: StateIndicatorsProps) {
   if (states.length === 0) return null;
 
@@ -31,7 +48,10 @@ export function StateIndicators({ states, position = "right" }: StateIndicatorsP
       {states.slice(0, 3).map((state, index) => (
         <motion.div
           key={state.id}
-          className="w-1.5 h-1.5 rounded-full"
+          role="img"
+          aria-label={STATE_LABELS[state.type] ?? state.type}
+          title={STATE_LABELS[state.type] ?? state.type}
+          className={`w-1.5 h-1.5 ${STATE_SHAPES[state.type] ?? "rounded-full"}`}
           style={{ backgroundColor: STATE_COLORS[state.type] || "#666" }}
           initial={{ scale: 0, opacity: 0 }}
           animate={{ 

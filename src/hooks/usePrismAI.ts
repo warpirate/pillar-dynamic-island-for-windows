@@ -95,6 +95,14 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
 
   const messagesRef = useRef(messages);
   const sourceRef = useRef(source);
+  // Synchronous guard against concurrent sends. Using a ref (not the `isLoading` state)
+  // because React state batching means two rapid click-throughs in the same render both
+  // see `isLoading === false` and would otherwise both fire requests.
+  const inFlightRef = useRef(false);
+  // Tracks the AbortController for the in-flight request so unmount can cancel it
+  // and prevent setState-after-unmount + dangling backend listeners.
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -120,6 +128,16 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
     }
   }, [actionMode]);
 
+  // Abort any in-flight request on unmount so we don't setState on a dead component.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+    };
+  }, []);
+
   const clearChat = useCallback(() => {
     setMessages([]);
     setActions([]);
@@ -134,7 +152,11 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
 
   const sendMessage = useCallback(async (message: string) => {
     const trimmedMessage = truncate(message.trim(), MAX_MESSAGE_CHARS);
-    if (!trimmedMessage || isLoading) return;
+    if (!trimmedMessage || inFlightRef.current) return;
+    inFlightRef.current = true;
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     const userMessage = createMessage("user", trimmedMessage);
     const previousMessages = trimMessages(messagesRef.current);
@@ -160,17 +182,24 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
           completion_tokens: number;
           total_tokens: number;
         };
-      }>("prism_chat", {
-        request: {
-          userMessage: trimmedMessage,
-          conversation: previousMessages.map((item) => ({
-            role: item.role,
-            content: truncate(item.content, MAX_MESSAGE_CHARS),
-          })),
-          contextBlocks: buildPrismContext(trimmedMessage, sourceRef.current),
-          allowActions: actionMode,
+      }>(
+        "prism_chat",
+        {
+          request: {
+            userMessage: trimmedMessage,
+            conversation: previousMessages.map((item) => ({
+              role: item.role,
+              content: truncate(item.content, MAX_MESSAGE_CHARS),
+            })),
+            contextBlocks: buildPrismContext(trimmedMessage, sourceRef.current),
+            allowActions: actionMode,
+          },
         },
-      });
+        // LLM responses can legitimately take longer than the default 10s for long contexts.
+        { timeoutMs: 60_000 }
+      );
+
+      if (controller.signal.aborted || !isMountedRef.current) return;
 
       if (!response) {
         setError("Prism request failed. Check your network or GROQ_API_KEY.");
@@ -207,6 +236,7 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
           : undefined
       );
     } catch (e) {
+      if (controller.signal.aborted || !isMountedRef.current) return;
       const message =
         e instanceof Error
           ? e.message
@@ -217,9 +247,13 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
               : "Unexpected Prism error.";
       setError(message);
     } finally {
-      setIsLoading(false);
+      inFlightRef.current = false;
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      if (isMountedRef.current) setIsLoading(false);
     }
-  }, [actionMode, isLoading]);
+  }, [actionMode]);
 
   return {
     messages,

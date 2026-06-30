@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useSpring, useTransform, AnimatePresence } from "motion/react";
 import { usePillState } from "../../hooks/usePillState";
 import { useTimer } from "../../hooks/useTimer";
@@ -15,7 +15,7 @@ import { useProductivity } from "../../hooks/useProductivity";
 import { useAppearance, hexToRgba } from "../../hooks/useAppearance";
 import { useSettings } from "../../hooks/useSettings";
 import { useAdaptivePolling } from "../../hooks/useAdaptivePolling";
-import { useScreenReader, useAnnounceListChange } from "../../hooks/useScreenReader";
+import { useScreenReader, useAnnounceListChange, ScreenReaderLiveRegions } from "../../hooks/useScreenReader";
 import { useDesktopGestures } from "../../hooks/useDesktopGestures";
 import { useWorkflowEvents } from "../../hooks/useWorkflowEvents";
 import { NotificationToast, NotificationsList, NotificationIndicator } from "./modules/NotificationModule";
@@ -33,6 +33,8 @@ import { platformApi } from "../../lib/platform";
 import type { PrismAction } from "../../types/prism";
 import type { WorkflowActionEnvelope } from "../../types/workflows";
 import { createPillThemeTokens, resolveReducedMotion } from "./themeTokens";
+
+const TIMER_NOTIFICATION_TITLE = "PILLAR Timer Complete";
 
 // Tab type for expanded view
 type ExpandedTab = "timer" | "media" | "notifications" | "settings" | "prism" | "productivity";
@@ -59,6 +61,30 @@ const getSecondsString = () => {
   return new Date().getSeconds().toString().padStart(2, "0");
 };
 
+// Summarize backup/import conflicts into an actionable sentence (count + first
+// human-readable reason) instead of a dead-end "needs attention" message.
+function describeBackupConflicts(
+  result: { conflicts?: Array<{ message?: string }> } | null | undefined
+): string {
+  const conflicts = result?.conflicts ?? [];
+  if (conflicts.length === 0) return " Check your network or storage and try again.";
+  const first = conflicts[0]?.message;
+  return ` ${conflicts.length} conflict${conflicts.length === 1 ? "" : "s"}.${first ? ` ${first}` : ""} Review before applying.`;
+}
+
+// True when focus is on an editable field inside the panel that holds unsaved
+// (non-empty) text. Used to avoid collapsing the panel mid-edit, which would
+// unmount the module and silently discard the user's typed task/note/event.
+function panelHasUnsavedDraft(container: HTMLElement | null): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el || !container || !container.contains(el)) return false;
+  const editable =
+    el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+  if (!editable) return false;
+  const value = (el as HTMLInputElement).value ?? el.textContent ?? "";
+  return value.trim().length > 0;
+}
+
 export function Pill() {
   const {
     isBooting,
@@ -69,6 +95,7 @@ export function Pill() {
     handleMouseLeave,
     handleClick,
     handleClickOutside,
+    expand: expandPill,
     completeBootAnimation,
     // Content state API
     backgroundStates,
@@ -85,8 +112,10 @@ export function Pill() {
     deepSleepThreshold: 300000,
   });
 
-  // Screen reader support
-  const { announce } = useScreenReader({
+  // Screen reader support. The live regions are rendered by THIS component (see
+  // the top of the return) so they reflect the same instance that announce() drives.
+  // (Previously App.tsx rendered the regions against a separate, never-announced instance.)
+  const { announce, politeAnnouncement, assertiveAnnouncement } = useScreenReader({
     defaultPriority: "polite",
     announcementDelay: 100,
     deduplicate: true,
@@ -127,7 +156,56 @@ export function Pill() {
     (label) => {
       setTimerState(null);
       setTimerAlert({ label, completedAt: Date.now() });
+      void sendTimerCompletionNotification(label);
     }
+  );
+
+  const ensureTimerNotificationPermission = useCallback(async (): Promise<NotificationPermission | "unsupported"> => {
+    if (typeof window === "undefined" || typeof Notification === "undefined") {
+      return "unsupported";
+    }
+    if (Notification.permission === "granted" || Notification.permission === "denied") {
+      return Notification.permission;
+    }
+    try {
+      return await Notification.requestPermission();
+    } catch {
+      return "denied";
+    }
+  }, []);
+
+  const sendTimerCompletionNotification = useCallback(
+    async (label: string) => {
+      const permission = await ensureTimerNotificationPermission();
+      if (permission !== "granted") return;
+
+      const desktopNotification = new Notification(TIMER_NOTIFICATION_TITLE, {
+        body: `${label} finished. Time's up.`,
+        tag: `pillar-timer-${label.toLowerCase().replace(/\s+/g, "-")}`,
+        requireInteraction: true,
+      });
+
+      desktopNotification.onclick = () => {
+        window.focus();
+        desktopNotification.close();
+      };
+
+      window.setTimeout(() => {
+        desktopNotification.close();
+      }, 15000);
+    },
+    [ensureTimerNotificationPermission]
+  );
+
+  const startTimerWithNotification = useCallback(
+    (preset: Parameters<typeof startTimer>[0]) => {
+      // Don't request OS notification permission here — popping the permission
+      // dialog the instant a timer starts is intrusive. It's requested lazily on
+      // first completion (sendTimerCompletionNotification). The in-app "Done!"
+      // alert fires regardless, so denying notifications never loses the signal.
+      startTimer(preset);
+    },
+    [startTimer]
   );
 
   // Dismiss timer alert
@@ -326,9 +404,14 @@ export function Pill() {
     if (!shouldTickClock) return;
 
     const tick = () => {
+      // setTime/setDateStr are no-ops via React's same-value bailout when the
+      // minute/day hasn't changed, so collapsed ticks don't re-render. Seconds,
+      // however, change every tick AND are only shown in the expanded header — so
+      // only update them while expanded. This stops a full per-second re-render of
+      // the whole Pill while it sits collapsed (the common state).
       setTime(getTimeString());
       setDateStr(getDateString());
-      setSeconds(getSecondsString());
+      if (isExpanded) setSeconds(getSecondsString());
     };
 
     // Initial sync
@@ -336,7 +419,7 @@ export function Pill() {
 
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [shouldTickClock]);
+  }, [shouldTickClock, isExpanded]);
 
   // When app becomes visible again, sync time immediately
   useEffect(() => {
@@ -361,6 +444,19 @@ export function Pill() {
 
   // Whether to show battery indicator in the idle pill
   const showBatteryInIdle = battery.hasBattery && appSettings.layout.idle_indicators.battery;
+
+  // Accessible name for the COLLAPSED pill. The visual idle content (clock, timer
+  // countdown, "Done!", battery, notification count) is otherwise invisible to AT,
+  // which would only hear a static "PILLAR Dynamic Island, button". Composed on
+  // focus via aria-label (not a live region) so the clock doesn't spam SR every second.
+  const collapsedAriaLabel = useMemo(() => {
+    const parts = [`PILLAR. ${time}.`];
+    if (timer.isComplete) parts.push("Timer finished.");
+    else if (timer.isActive) parts.push(`Timer ${formatTime(timer.remainingSeconds)} remaining.`);
+    if (notifications.length > 0) parts.push(`${notifications.length} notification${notifications.length === 1 ? "" : "s"}.`);
+    if (battery.hasBattery) parts.push(`Battery ${battery.percent}%${battery.isCharging ? ", charging" : ""}.`);
+    return parts.join(" ");
+  }, [time, timer.isComplete, timer.isActive, timer.remainingSeconds, formatTime, notifications.length, battery.hasBattery, battery.percent, battery.isCharging]);
 
   useEffect(() => {
     if (!safeTabs.some((t) => t.id === activeTab)) {
@@ -394,13 +490,13 @@ export function Pill() {
     },
   });
 
-  // Snappy spring so hover-in and unhover-out feel the same
-  const pillSpring = springConfig.snappy;
+  // Snappy spring so hover-in and unhover-out feel the same. When reduced motion is
+  // requested, use a near-instant spring so the pill resize snaps without a bouncy morph.
+  const pillSpring = reducedMotion ? { stiffness: 1000, damping: 100, mass: 0.1 } : springConfig.snappy;
   const width = useSpring(pillDimensions.boot.width, pillSpring);
   const height = useSpring(pillDimensions.boot.height, pillSpring);
   const borderRadiusTop = useSpring(pillDimensions.boot.borderRadius, pillSpring);
   const borderRadiusBottom = useSpring(pillDimensions.boot.borderRadius, pillSpring);
-  const blurAmount = useSpring(8, pillSpring);
   const shadowOpacity = useSpring(0.2, pillSpring);
 
   // Combined borderRadius: top-left top-right bottom-right bottom-left
@@ -409,8 +505,10 @@ export function Pill() {
     ([t, b]: number[]) => `${t}px ${t}px ${b}px ${b}px`
   );
 
-  // Transform blur and shadow for style (static shadow when idle to avoid any blink)
-  const backdropFilter = useTransform(blurAmount, (v) => `blur(${v}px)`);
+  // Static blur: animating the backdrop-filter radius forced a full-rect Gaussian
+  // blur recompute every spring frame on the always-on-top layered window. The
+  // idle↔hover delta (10↔14px) is imperceptible, so a constant blur is used.
+  const backdropFilter = "blur(12px)";
   const boxShadow = useTransform(
     shadowOpacity,
     (v) =>
@@ -420,6 +518,18 @@ export function Pill() {
   // Boot animation sequence
   useEffect(() => {
     if (!isBooting) return;
+
+    // Reduced motion: skip the ~1.15s dot→morph→zoom flourish that gates all
+    // interaction at launch. Snap straight to idle so the pill is usable immediately.
+    if (reducedMotion) {
+      width.set(pillDimensions.idle.width);
+      height.set(pillDimensions.idle.height);
+      borderRadiusBottom.set(pillDimensions.idle.borderRadius);
+      borderRadiusTop.set(isNotch ? 0 : pillDimensions.idle.borderRadius);
+      setBootPhase("complete");
+      completeBootAnimation();
+      return;
+    }
 
     const sequence = async () => {
       // Phase 1: Dot appears
@@ -439,7 +549,6 @@ export function Pill() {
       height.set(pillDimensions.hover.height);
       borderRadiusBottom.set(pillDimensions.hover.borderRadius);
       borderRadiusTop.set(isNotch ? 0 : pillDimensions.hover.borderRadius);
-      blurAmount.set(12);
       shadowOpacity.set(0.25);
 
       await new Promise((r) => setTimeout(r, 350));
@@ -450,7 +559,7 @@ export function Pill() {
     };
 
     sequence();
-  }, [isBooting, width, height, borderRadiusTop, borderRadiusBottom, isNotch, blurAmount, shadowOpacity, completeBootAnimation]);
+  }, [isBooting, width, height, borderRadiusTop, borderRadiusBottom, isNotch, shadowOpacity, completeBootAnimation, reducedMotion]);
 
   // Single place for hover/expanded/unhover: one visual state → one target style
   const visualState: PillVisualState = isExpanded ? "expanded" : isHovering ? "hover" : "idle";
@@ -467,9 +576,8 @@ export function Pill() {
     height.set(target.height);
     borderRadiusBottom.set(target.borderRadius);
     borderRadiusTop.set(isNotch ? 0 : target.borderRadius);
-    blurAmount.set(target.blur);
     shadowOpacity.set(target.shadow);
-  }, [isBooting, visualState, isNotch, showMediaInIdle, showBatteryInIdle, hasNotificationBadge, width, height, borderRadiusTop, borderRadiusBottom, blurAmount, shadowOpacity]);
+  }, [isBooting, visualState, isNotch, showMediaInIdle, showBatteryInIdle, hasNotificationBadge, width, height, borderRadiusTop, borderRadiusBottom, shadowOpacity]);
 
   // Keep window always receiving clicks so the pill is clickable.
   // (Enabling click-through when idle would block mouseenter, so we'd never get hover/click.)
@@ -530,79 +638,72 @@ export function Pill() {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape: close expanded view
+      // Escape: close expanded view — but if the user is mid-edit with unsaved
+      // text, first blur the field (which would lose nothing) instead of collapsing
+      // and discarding their draft. A second Escape then closes.
       if (e.key === "Escape" && isExpanded) {
-        handleClickOutside();
+        if (panelHasUnsavedDraft(containerRef.current)) {
+          (document.activeElement as HTMLElement | null)?.blur();
+        } else {
+          handleClickOutside();
+        }
         return;
       }
 
-      // Ctrl+Shift+Space: toggle expand/collapse
+      // Ctrl+Shift+Space: toggle expand/collapse. Use force-expand (expandPill),
+      // NOT handleClick — handleClick only expands from the mouse-set "hover" state
+      // and no-ops from idle, so the shortcut was previously dead from a resting pill.
       if (e.key === " " && e.ctrlKey && e.shiftKey) {
         e.preventDefault();
         if (isExpanded) {
           handleClickOutside();
-        } else if (isHovering || isIdle) {
-          handleClick();
+        } else {
+          expandPill();
         }
         triggerActivity(); // Mark user as active
         return;
       }
 
-      // Arrow keys: navigate tabs (only when expanded)
-      if (isExpanded && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      // Tab-strip navigation keys must NOT hijack caret movement inside text fields
+      // (Prism chat, productivity inputs). If focus is in an editable element, let
+      // the browser handle Arrow/Home/End natively.
+      const target = e.target as HTMLElement | null;
+      const isEditingText = !!target?.closest("input, textarea, [contenteditable]");
+
+      // Arrow keys: navigate the tab strip (only when expanded, not while editing text)
+      if (isExpanded && !isEditingText && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
         const tabs = safeTabs.map((tab) => tab.id);
         const currentIndex = tabs.indexOf(activeTab);
-        let nextIndex: number;
-        
-        if (e.key === "ArrowLeft") {
-          nextIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
-        } else {
-          nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
-        }
-        
+        const nextIndex =
+          e.key === "ArrowLeft"
+            ? (currentIndex > 0 ? currentIndex - 1 : tabs.length - 1)
+            : (currentIndex < tabs.length - 1 ? currentIndex + 1 : 0);
         setActiveTab(tabs[nextIndex]);
-        triggerActivity(); // Mark user as active
+        triggerActivity();
         return;
       }
 
-      // Home/End: navigate to first/last tab (only when expanded)
-      if (isExpanded && (e.key === "Home" || e.key === "End")) {
+      // Home/End: jump to first/last tab (only when expanded, not while editing text)
+      if (isExpanded && !isEditingText && (e.key === "Home" || e.key === "End")) {
         e.preventDefault();
         const tabs = safeTabs.map((tab) => tab.id);
-        
-        if (e.key === "Home") {
-          setActiveTab(tabs[0]);
-        } else {
-          setActiveTab(tabs[tabs.length - 1]);
-        }
-        triggerActivity(); // Mark user as active
+        setActiveTab(e.key === "Home" ? tabs[0] : tabs[tabs.length - 1]);
+        triggerActivity();
         return;
       }
 
-      // Tab/Shift+Tab: manage focus within expanded view
-      if (isExpanded && (e.key === "Tab")) {
-        e.preventDefault();
-        const tabs = safeTabs.map((tab) => tab.id);
-        const currentIndex = tabs.indexOf(activeTab);
-        
-        if (e.shiftKey) {
-          // Shift+Tab: move to previous tab
-          const prevIndex = currentIndex > 0 ? currentIndex - 1 : tabs.length - 1;
-          setActiveTab(tabs[prevIndex]);
-        } else {
-          // Tab: move to next tab
-          const nextIndex = currentIndex < tabs.length - 1 ? currentIndex + 1 : 0;
-          setActiveTab(tabs[nextIndex]);
-        }
-        triggerActivity(); // Mark user as active
-        return;
-      }
+      // NOTE: Tab / Shift+Tab is intentionally NOT handled here. It must perform
+      // normal DOM focus traversal so keyboard users can reach the controls inside
+      // the active panel (Start/Pause/Stop, sliders, Prism input, productivity
+      // fields). The tab STRIP is reachable via Arrow + Home/End above plus its
+      // roving tabindex, per the WAI-ARIA tabs pattern. A previous Tab branch here
+      // preventDefault'd every Tab and trapped focus on the tab strip.
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isExpanded, isHovering, isIdle, activeTab, handleClick, handleClickOutside, safeTabs]);
+  }, [isExpanded, activeTab, handleClickOutside, expandPill, safeTabs, triggerActivity]);
 
   // Screen reader announcements for key state changes
   const prevTimerStateRef = useRef(timer);
@@ -699,7 +800,7 @@ export function Pill() {
             typeof args.label === "string" && args.label.trim()
               ? args.label.trim().slice(0, 40)
               : `Prism ${minutes}m`;
-          startTimer({ label, minutes });
+          startTimerWithNotification({ label, minutes });
           return `Timer started: ${label} (${minutes}m).`;
         }
         case "pause_timer":
@@ -801,8 +902,15 @@ export function Pill() {
       open_productivity_tab: "productivity",
     };
 
+    // Tray / global-shortcut / workflow callers don't pass through hover, so we
+    // must use expandPill() (force expand) instead of handleClick() which is
+    // hover-gated and would silently no-op from idle.
     if (action.id === "toggle_expand") {
-      handleClick();
+      if (isExpanded) {
+        handleClickOutside();
+      } else {
+        expandPill();
+      }
       return;
     }
 
@@ -810,16 +918,16 @@ export function Pill() {
       const rawTitle = typeof action.args?.title === "string" ? action.args.title : "Quick task";
       const title = rawTitle.trim().slice(0, 120);
       if (title) addTask(title);
-      if (!isExpanded) handleClick();
+      expandPill();
       setActiveTab("productivity");
       return;
     }
 
     const targetTab = tabActionMap[action.id];
     if (!targetTab) return;
-    if (!isExpanded) handleClick();
+    expandPill();
     setActiveTab(targetTab);
-  }, [addTask, handleClick, isExpanded]);
+  }, [addTask, expandPill, handleClickOutside, isExpanded]);
 
   useWorkflowEvents(executeWorkflowAction);
 
@@ -846,6 +954,9 @@ export function Pill() {
 
     const handleGlobalClick = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        // Don't collapse (and unmount the module, losing the draft) while the user
+        // is mid-edit with unsaved text in a panel field.
+        if (panelHasUnsavedDraft(containerRef.current)) return;
         handleClickOutside();
       }
     };
@@ -862,11 +973,16 @@ export function Pill() {
   }, [isExpanded, handleClickOutside]);
 
   return (
+    <>
+      {/* Live regions render here (Pill's own useScreenReader instance) so every
+          announce() call below is actually spoken. Kept outside the pill body so
+          they stay mounted whether collapsed or expanded. */}
+      <ScreenReaderLiveRegions polite={politeAnnouncement} assertive={assertiveAnnouncement} />
     <motion.div
       ref={containerRef}
       className="relative cursor-pointer"
       role={isExpanded ? "dialog" : "button"}
-      aria-label={isExpanded ? "PILLAR Dynamic Island - Expanded" : "PILLAR Dynamic Island"}
+      aria-label={isExpanded ? "PILLAR Dynamic Island - Expanded" : collapsedAriaLabel}
       aria-modal={isExpanded ? "true" : undefined}
       aria-expanded={isExpanded ? "true" : "false"}
       tabIndex={isExpanded ? -1 : 0}
@@ -902,7 +1018,9 @@ export function Pill() {
       onKeyDown={(e) => {
         if (!isExpanded && (e.key === "Enter" || e.key === " ")) {
           e.preventDefault();
-          handleClick();
+          // Force-expand: handleClick only expands from the mouse-set "hover" state,
+          // so a keyboard user who Tab-focuses the idle pill could not open it.
+          expandPill();
           triggerActivity(); // Mark user as active
         }
       }}
@@ -948,24 +1066,15 @@ export function Pill() {
         <StateIndicators states={backgroundStates} position="right" />
       )}
 
-      {/* Notification toast (appears BELOW pill, then animates into badge) — click opens the app */}
+      {/* Notification toast (appears BELOW pill, then animates into badge).
+          Body click → activate via NotificationToast's internal onActivate;
+          X button → dismiss only. Do NOT add an onClick(Capture) on this wrapper:
+          a capture-phase handler swallows the X button's stopPropagation and
+          ends up activating the app every time the user tries to dismiss. */}
       {!isExpanded && (notificationPhase === "incoming" || notificationPhase === "absorbing") && latestNotification && (
         <div
           className="absolute left-1/2 -translate-x-1/2 z-[100]"
           style={{ top: "calc(100% + 10px)" }}
-          onClickCapture={(e) => {
-            e.stopPropagation();
-            const { id, aumid } = latestNotification;
-            platformApi.getCapabilities().then((caps) => {
-              if (!caps.notifications) return;
-              if (aumid) {
-                platformApi.activateAppByAumid(aumid).catch(() => {});
-              } else {
-                platformApi.activateNotification(id).catch(() => {});
-              }
-            }).catch(() => {});
-            clearLatestNotification();
-          }}
         >
           <NotificationToast
             notification={latestNotification}
@@ -980,7 +1089,9 @@ export function Pill() {
                 } else {
                   await platformApi.activateNotification(id);
                 }
-              } catch (_) { /* ignore */ }
+              } catch {
+                // Best-effort activation; ignore failures so the toast still dismisses cleanly.
+              }
             }}
             phase={notificationPhase}
           />
@@ -1049,12 +1160,13 @@ export function Pill() {
                   initial={idleSlotAnimations.center.initial}
                   animate={{
                     ...idleSlotAnimations.center.animate,
-                    opacity: [1, 0.5, 1],
+                    // Steady opacity under reduced motion — no perpetual blink.
+                    opacity: reducedMotion ? 1 : [1, 0.5, 1],
                   }}
                   exit={idleSlotAnimations.center.exit}
                   transition={{
                     ...idleSlotAnimations.transition,
-                    opacity: { duration: 1, repeat: Infinity },
+                    ...(reducedMotion ? {} : { opacity: { duration: 1, repeat: Infinity } }),
                   }}
                 >
                   Done!
@@ -1227,7 +1339,7 @@ export function Pill() {
                       presets={presets}
                       formatTime={formatTime}
                       progress={timerProgress}
-                      onStart={startTimer}
+                      onStart={startTimerWithNotification}
                       onPause={pauseTimer}
                       onResume={resumeTimer}
                       onStop={stopTimer}
@@ -1429,15 +1541,15 @@ export function Pill() {
                       onAddEvent={addAgendaEvent}
                       onExportBackup={async () => {
                         const result = await exportBackup();
-                        announce(result?.valid ? "Productivity backup exported" : "Backup export needs attention");
+                        announce(result?.valid ? "Productivity backup exported." : `Backup export failed.${describeBackupConflicts(result)}`);
                       }}
                       onPreviewImport={async () => {
                         const result = await importBackup("preview");
-                        announce(result?.valid ? "Backup preview valid" : "Backup preview has conflicts");
+                        announce(result?.valid ? "Backup preview valid, ready to apply." : `Backup preview has conflicts.${describeBackupConflicts(result)}`);
                       }}
                       onApplyImport={async () => {
                         const result = await importBackup("apply");
-                        announce(result?.valid ? "Backup applied" : "Backup apply blocked by conflicts");
+                        announce(result?.valid ? "Backup applied." : `Backup not applied.${describeBackupConflicts(result)}`);
                       }}
                     />
                   </motion.div>
@@ -1515,5 +1627,6 @@ export function Pill() {
       )}
 
     </motion.div>
+    </>
   );
 }

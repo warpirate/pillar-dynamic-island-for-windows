@@ -35,6 +35,8 @@ export function useScreenReader(config: ScreenReaderConfig = {}): UseScreenReade
   const [assertiveAnnouncement, setAssertiveAnnouncement] = useState<string | null>(null);
   const announcementHistoryRef = useRef<Array<{ message: string; timestamp: number }>>([]);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Inner "clear announcement after 1s" timeout — separate handle so we can cancel it on unmount.
+  const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const wasRecentlyAnnounced = useCallback((message: string): boolean => {
     if (!fullConfig.deduplicate) return false;
@@ -64,7 +66,10 @@ export function useScreenReader(config: ScreenReaderConfig = {}): UseScreenReade
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
-    
+    if (clearTimeoutRef.current) {
+      clearTimeout(clearTimeoutRef.current);
+    }
+
     timeoutRef.current = setTimeout(() => {
       if (actualPriority === "assertive") {
         setAssertiveAnnouncement(message);
@@ -72,13 +77,14 @@ export function useScreenReader(config: ScreenReaderConfig = {}): UseScreenReade
       } else {
         setPoliteAnnouncement(message);
       }
-      
-      setTimeout(() => {
+
+      clearTimeoutRef.current = setTimeout(() => {
         if (actualPriority === "assertive") {
           setAssertiveAnnouncement(null);
         } else {
           setPoliteAnnouncement(null);
         }
+        clearTimeoutRef.current = null;
       }, 1000);
     }, fullConfig.announcementDelay);
   }, [fullConfig.defaultPriority, fullConfig.announcementDelay, wasRecentlyAnnounced]);
@@ -88,15 +94,18 @@ export function useScreenReader(config: ScreenReaderConfig = {}): UseScreenReade
       clearTimeout(timeoutRef.current);
       timeoutRef.current = null;
     }
+    if (clearTimeoutRef.current) {
+      clearTimeout(clearTimeoutRef.current);
+      clearTimeoutRef.current = null;
+    }
     setPoliteAnnouncement(null);
     setAssertiveAnnouncement(null);
   }, []);
 
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (clearTimeoutRef.current) clearTimeout(clearTimeoutRef.current);
     };
   }, []);
 

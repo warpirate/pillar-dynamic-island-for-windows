@@ -46,17 +46,21 @@ export function PrismModule({
       <div className="flex items-center justify-between gap-2 mb-1.5 flex-shrink-0">
         <span className="text-white/80 text-[11px] uppercase tracking-wider">Prism AI</span>
         <div className="flex items-center gap-1">
-          <span className="text-[9px] text-white/45 px-1 py-0.5 rounded bg-white/10">
-            actions {actionMode ? "filtered" : "off"}
+          <span
+            className="text-[9px] text-white/45 px-1 py-0.5 rounded bg-white/10"
+            title="When on, Prism can directly control timer, media, and volume."
+          >
+            {actionMode ? "auto-runs actions" : "chat only"}
           </span>
           <motion.button
+            aria-pressed={actionMode}
             className={`px-1.5 py-0.5 rounded text-[9px] ${
               actionMode ? "bg-green-500/25 text-green-300" : "bg-white/10 text-white/60"
             }`}
             onClick={() => onToggleActionMode(!actionMode)}
             {...microInteractions.button}
           >
-            {actionMode ? "Actions" : "Actions"}
+            {actionMode ? "Actions: On" : "Actions: Off"}
           </motion.button>
           <motion.button
             className="px-1.5 py-0.5 rounded text-[9px] bg-white/10 text-white/60 hover:text-white/80"
@@ -81,7 +85,7 @@ export function PrismModule({
           }}
         >
           {messages.length === 0 && (
-            <div className="text-white/40 text-[12px] leading-relaxed text-center py-12">
+            <div className="text-white/60 text-[12px] leading-relaxed text-center py-12">
               Ask Prism about timer, media, notifications, or settings.
             </div>
           )}
@@ -99,7 +103,7 @@ export function PrismModule({
                 }`}
               >
                 <p className="text-[12px] whitespace-pre-wrap break-words leading-relaxed">{item.content}</p>
-                <p className="text-[10px] text-white/35 mt-1 text-right">{formatTime(item.timestamp)}</p>
+                <p className="text-[10px] text-white/55 mt-1 text-right">{formatTime(item.timestamp)}</p>
               </div>
             </div>
           ))}

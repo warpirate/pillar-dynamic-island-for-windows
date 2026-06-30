@@ -94,28 +94,26 @@ export function useBattery(pollInterval = 60000): UseBatteryReturn {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
+    // Re-arm on every effect setup so a previous cleanup (from a dep change OR
+    // React 18 StrictMode double-invoke) doesn't permanently disable the hook.
+    isMountedRef.current = true;
 
     const handleVisibilityChange = () => {
-      if (!isMounted) return;
+      if (!isMountedRef.current) return;
       if (document.hidden) {
         stopPolling();
       } else {
         resetIdleTimer();
-        if (isMounted) fetchBattery();
+        fetchBattery();
         startPolling();
       }
     };
 
-    if (isMounted) fetchBattery();
+    fetchBattery();
     startPolling();
-
-    if (isMounted) {
-      document.addEventListener("visibilitychange", handleVisibilityChange);
-    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      isMounted = false;
       isMountedRef.current = false;
       stopPolling();
       document.removeEventListener("visibilitychange", handleVisibilityChange);

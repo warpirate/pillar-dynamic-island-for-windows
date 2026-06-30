@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createLogger } from "../lib/logger";
+
+const log = createLogger("crash-recovery");
 
 // =============================================================================
 // Types
@@ -70,15 +73,24 @@ export function useCrashRecovery(
 
   // Load crash history from localStorage on mount
   useEffect(() => {
+    isMountedRef.current = true;
     try {
       const saved = localStorage.getItem("pillar_crash_history");
       if (saved) {
-        const parsed = JSON.parse(saved) as CrashReport[];
-        // Filter to only recent crashes (last 24 hours)
-        const recent = parsed.filter(
-          crash => Date.now() - crash.timestamp < 86400000
-        );
-        setCrashHistory(recent.slice(0, maxCrashReports));
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Filter to only recent crashes (last 24 hours) AND validate item shape
+          // so a single corrupt entry can't crash the loader.
+          const recent = parsed.filter(
+            (crash): crash is CrashReport =>
+              !!crash &&
+              typeof crash === "object" &&
+              typeof (crash as CrashReport).id === "string" &&
+              typeof (crash as CrashReport).timestamp === "number" &&
+              Date.now() - (crash as CrashReport).timestamp < 86400000
+          );
+          setCrashHistory(recent.slice(0, maxCrashReports));
+        }
       }
     } catch {
       // Ignore localStorage errors
@@ -134,8 +146,8 @@ export function useCrashRecovery(
       return newHistory;
     });
 
-    // Log to console for debugging
-    console.error("[Crash Recovery] Crash reported:", crashReport);
+    // Route through logger so backend gets a persistent record.
+    log.error("Crash reported", crashReport);
 
     // Trigger auto-recovery if enabled and crash is severe
     if (enableAutoRecovery && (severity === "severe" || severity === "critical")) {
@@ -159,19 +171,18 @@ export function useCrashRecovery(
   // Detect crash loop
   const isCrashLoopDetected = recentCrashCount >= crashThreshold;
 
-  // Calculate health score
-  const healthScore = useCallback((): number => {
+  // Calculate health score. Memoized so we don't recompute on every parent render —
+  // only when crashHistory actually changes.
+  const currentHealthScore = useMemo((): number => {
     if (crashHistory.length === 0) return 100;
 
     const now = Date.now();
     let score = 100;
 
-    // Deduct points for recent crashes
     crashHistory.forEach(crash => {
       const age = now - crash.timestamp;
       const ageInHours = age / 3600000;
 
-      // Severity penalties
       const severityPenalty = {
         minor: 5,
         moderate: 10,
@@ -181,22 +192,21 @@ export function useCrashRecovery(
 
       // Age decay (older crashes have less impact)
       const ageDecay = Math.max(0.1, 1 - ageInHours / 24);
-      
+
       score -= severityPenalty * ageDecay;
     });
 
     return Math.max(0, Math.min(100, score));
   }, [crashHistory]);
 
-  const currentHealthScore = healthScore();
   const isHealthy = currentHealthScore >= 50;
 
   // Trigger recovery action
   const triggerRecovery = useCallback(async () => {
     if (isRecovering) return;
-    
+
     setIsRecovering(true);
-    console.log("[Crash Recovery] Starting recovery...");
+    log.warn("Starting recovery sequence");
 
     try {
       // 1. Clear all caches
@@ -220,7 +230,7 @@ export function useCrashRecovery(
       }, 500);
 
     } catch (error) {
-      console.error("[Crash Recovery] Recovery failed:", error);
+      log.error("Recovery failed", error);
       setIsRecovering(false);
     }
   }, [isRecovering]);

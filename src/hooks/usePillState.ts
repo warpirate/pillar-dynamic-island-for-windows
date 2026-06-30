@@ -37,6 +37,12 @@ interface UsePillStateReturn {
   handleMouseLeave: () => void;
   handleClick: () => void;
   handleClickOutside: () => void;
+  /**
+   * Force the pill into expanded state regardless of current interaction state
+   * (except during boot). Used by tray menu items, global shortcuts, and
+   * workflow events — callers there don't go through hover/click chain.
+   */
+  expand: () => void;
   completeBootAnimation: () => void;
   
   // New content state API
@@ -60,6 +66,9 @@ export function usePillState(): UsePillStateReturn {
   const exitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionStateRef = useRef<InteractionState>(interactionState);
   interactionStateRef.current = interactionState;
+  // Auto-dismiss timers for notification content states; cleaned up on unmount
+  // so they don't fire setState after the component is gone.
+  const notificationTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // Content states (multiple can be active simultaneously)
   const [contentStates, setContentStates] = useState<ContentState[]>([]);
@@ -143,10 +152,12 @@ export function usePillState(): UsePillStateReturn {
     });
     addContentState(state);
 
-    // Auto-remove notification after expiry
-    setTimeout(() => {
+    // Auto-remove notification after expiry — track the handle so unmount cancels it.
+    const handle = setTimeout(() => {
+      notificationTimeoutsRef.current.delete(handle);
       removeContentState(state.id);
     }, NOTIFICATION_DURATION_MS);
+    notificationTimeoutsRef.current.add(handle);
   }, [addContentState, removeContentState]);
 
   // ==========================================================================
@@ -175,6 +186,8 @@ export function usePillState(): UsePillStateReturn {
       clearTimeout(exitTimeoutRef.current);
       exitTimeoutRef.current = null;
     }
+    notificationTimeoutsRef.current.forEach((handle) => clearTimeout(handle));
+    notificationTimeoutsRef.current.clear();
   }, []);
 
   useEffect(() => {
@@ -231,6 +244,23 @@ export function usePillState(): UsePillStateReturn {
     }
   }, []);
 
+  const expand = useCallback(() => {
+    // Programmatic expansion (tray, shortcuts, workflow). Skip while booting
+    // so we don't fight the boot animation.
+    if (interactionStateRef.current === "boot") return;
+    if (interactionStateRef.current === "expanded") return;
+    // Cancel any pending hover/exit transitions so we land cleanly in expanded.
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    if (exitTimeoutRef.current) {
+      clearTimeout(exitTimeoutRef.current);
+      exitTimeoutRef.current = null;
+    }
+    setInteractionState("expanded");
+  }, []);
+
   const handleClickOutside = useCallback(() => {
     if (interactionStateRef.current === "expanded") {
       setInteractionState("idle");
@@ -254,6 +284,7 @@ export function usePillState(): UsePillStateReturn {
     handleMouseLeave,
     handleClick,
     handleClickOutside,
+    expand,
     completeBootAnimation,
     
     // Content state API

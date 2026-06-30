@@ -149,7 +149,11 @@ export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
 
   // Start polling when mounted
   useEffect(() => {
+    // Re-arm on every effect setup so a previous cleanup doesn't keep the hook dead.
+    isMountedRef.current = true;
+
     const handleVisibilityChange = () => {
+      if (!isMountedRef.current) return;
       if (document.hidden) {
         stopPolling();
       } else {
