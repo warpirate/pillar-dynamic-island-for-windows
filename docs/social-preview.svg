@@ -1,0 +1,94 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0a0c11"/>
+      <stop offset="1" stop-color="#070809"/>
+    </linearGradient>
+    <radialGradient id="glowRed" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ff2d4f" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ff2d4f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowBlue" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#5a78ff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#5a78ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="red" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff5e78"/>
+      <stop offset="1" stop-color="#ff2d4f"/>
+    </linearGradient>
+    <linearGradient id="redText" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ff5e78"/>
+    </linearGradient>
+    <linearGradient id="art" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff2d4f"/>
+      <stop offset="1" stop-color="#ff8a5b"/>
+    </linearGradient>
+    <linearGradient id="pillBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b1b22"/>
+      <stop offset="1" stop-color="#0f0f13"/>
+    </linearGradient>
+    <linearGradient id="track" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff2d4f" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#ff2d4f"/>
+    </linearGradient>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="34"/>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <ellipse cx="540" cy="-40" rx="640" ry="360" fill="url(#glowRed)"/>
+  <ellipse cx="1180" cy="120" rx="420" ry="320" fill="url(#glowBlue)"/>
+  <ellipse cx="120" cy="600" rx="380" ry="260" fill="url(#glowRed)" opacity="0.5"/>
+
+  <!-- wordmark -->
+  <g transform="translate(72,64)">
+    <rect width="46" height="46" rx="13" fill="url(#red)"/>
+    <text x="23" y="32" font-family="Segoe UI, Arial, sans-serif" font-size="26" font-weight="800" fill="#ffffff" text-anchor="middle">P</text>
+    <text x="62" y="33" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="800" letter-spacing="0.5" fill="#f6f7f9">PILLAR</text>
+  </g>
+
+  <!-- headline (kept narrow so it clears the pill card on the right) -->
+  <g font-family="Segoe UI, Arial, sans-serif" font-weight="800" letter-spacing="-2">
+    <text x="70" y="268" font-size="78" fill="#f6f7f9">Dynamic Island</text>
+    <text x="70" y="356" font-size="78"><tspan fill="#5f6675">now</tspan> <tspan fill="url(#redText)">on Windows.</tspan></text>
+  </g>
+
+  <!-- subline -->
+  <text x="72" y="438" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="500" fill="#9aa0ad">Media · Timers · Notifications · System stats · Private AI</text>
+
+  <!-- chip -->
+  <g transform="translate(72,478)">
+    <rect width="430" height="46" rx="23" fill="#ffffff" fill-opacity="0.05" stroke="#ffffff" stroke-opacity="0.14"/>
+    <circle cx="28" cy="23" r="5" fill="#2ee6a6"/>
+    <text x="46" y="30" font-family="Segoe UI, Arial, sans-serif" font-size="20" font-weight="600" fill="#cfd3da">Free &amp; open source · Windows 10/11</text>
+  </g>
+
+  <!-- url -->
+  <text x="72" y="588" font-family="Consolas, 'JetBrains Mono', monospace" font-size="22" fill="#5f6675">pillar-dynamic-island.vercel.app</text>
+
+  <!-- right: the pill (expanded media scene) -->
+  <g transform="translate(770,232)">
+    <ellipse cx="220" cy="100" rx="250" ry="150" fill="url(#glowRed)" filter="url(#soft)" opacity="0.7"/>
+    <rect x="0" y="0" width="440" height="200" rx="30" fill="url(#pillBody)" stroke="#ffffff" stroke-opacity="0.12"/>
+    <!-- header -->
+    <text x="28" y="40" font-family="Consolas, monospace" font-size="16" fill="#9aa0ad" letter-spacing="1">MEDIA</text>
+    <text x="412" y="40" font-family="Consolas, monospace" font-size="16" fill="#9aa0ad" text-anchor="end">Spotify</text>
+    <!-- album art -->
+    <rect x="28" y="62" width="64" height="64" rx="13" fill="url(#art)"/>
+    <!-- track meta -->
+    <text x="108" y="88" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700" fill="#ffffff">Midnight City</text>
+    <text x="108" y="114" font-family="Segoe UI, Arial, sans-serif" font-size="17" fill="#9aa0ad">M83 — Hurry Up, We're Dreaming</text>
+    <!-- controls -->
+    <g fill="#ffffff" opacity="0.85">
+      <rect x="330" y="84" width="14" height="14" rx="2"/>
+      <rect x="356" y="84" width="14" height="14" rx="2"/>
+      <rect x="382" y="84" width="14" height="14" rx="2"/>
+    </g>
+    <!-- progress -->
+    <rect x="28" y="150" width="384" height="8" rx="4" fill="#ffffff" fill-opacity="0.12"/>
+    <rect x="28" y="150" width="180" height="8" rx="4" fill="url(#track)"/>
+  </g>
+</svg>
