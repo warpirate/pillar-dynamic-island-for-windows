@@ -338,6 +338,25 @@ export function Pill() {
     prevMediaTitleRef.current = currentTitle;
   }, [media?.title, media?.isPlaying, appSettings.behavior.pause_other_sessions]);
 
+  // Active-app awareness for Prism — Pilly-style "knows what you're working on",
+  // done privately: active window title + exe name only, opt-in, persisted locally.
+  // Default on; resolved on demand at send time (no background polling).
+  const [activeAppContext, setActiveAppContext] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("pillar_prism_active_app") !== "off";
+    } catch {
+      return true;
+    }
+  });
+  const toggleActiveAppContext = useCallback((enabled: boolean) => {
+    setActiveAppContext(enabled);
+    try {
+      localStorage.setItem("pillar_prism_active_app", enabled ? "on" : "off");
+    } catch {
+      /* ignore storage errors */
+    }
+  }, []);
+
   const {
     messages: prismMessages,
     actions: prismActions,
@@ -364,6 +383,8 @@ export function Pill() {
       noteCount: productivity.notes.length,
       upcomingEventCount: productivity.calendarEvents.filter((event) => event.startsAt >= Date.now()).length,
     },
+    includeActiveApp: activeAppContext,
+    activeApp: null,
   });
 
   // Whether to show notification badge in the pill
@@ -1513,6 +1534,8 @@ export function Pill() {
                       onSendMessage={sendPrismMessage}
                       onToggleActionMode={setPrismActionMode}
                       onClearChat={clearPrismChat}
+                      activeAppContext={activeAppContext}
+                      onToggleActiveAppContext={toggleActiveAppContext}
                     />
                   </motion.div>
                 )}

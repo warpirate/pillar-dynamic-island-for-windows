@@ -12,6 +12,15 @@ import {
   type PrismContextBlock,
 } from "../types/prism";
 
+/** Foreground-app context: the active window's title + executable name.
+ *  Populated on demand at send time (no background polling); title + exe only,
+ *  never screenshots or window contents. */
+export interface PrismActiveApp {
+  title: string;
+  processName: string;
+  available: boolean;
+}
+
 export interface PrismContextSource {
   timer: TimerState;
   media: MediaInfo | null;
@@ -27,6 +36,10 @@ export interface PrismContextSource {
     noteCount: number;
     upcomingEventCount: number;
   };
+  /** Whether the user has enabled active-app awareness (opt-in toggle). */
+  includeActiveApp: boolean;
+  /** Resolved foreground app, injected at send time when includeActiveApp is on. */
+  activeApp?: PrismActiveApp | null;
 }
 
 function truncate(value: string, maxChars: number): string {
@@ -46,6 +59,7 @@ function detectIntent(userMessage: string): {
   wantsSettings: boolean;
   wantsBattery: boolean;
   wantsProductivity: boolean;
+  wantsFocus: boolean;
 } {
   const lower = userMessage.toLowerCase();
   const wantsOverview =
@@ -56,6 +70,9 @@ function detectIntent(userMessage: string): {
   const wantsSettings = /(volume|mute|brightness|audio|mixer|autostart|settings)/.test(lower);
   const wantsBattery = /(battery|charge|charging|power|energy|percent|low battery)/.test(lower);
   const wantsProductivity = /(task|todo|note|notes|agenda|calendar|event|productivity)/.test(lower);
+  // "what am I working on", "this", "current app", "what's open", "on my screen", "in front of me"
+  const wantsFocus =
+    /(working on|what.*(open|doing|screen)|current app|active app|this (app|window|file|page|doc|document|code|tab)|in front of me|right now|focused?)/.test(lower);
 
   return {
     wantsOverview,
@@ -65,6 +82,7 @@ function detectIntent(userMessage: string): {
     wantsSettings,
     wantsBattery,
     wantsProductivity,
+    wantsFocus,
   };
 }
 
@@ -182,6 +200,16 @@ function buildProductivityBlock(source: PrismContextSource["productivitySummary"
   };
 }
 
+function buildFocusBlock(activeApp: PrismActiveApp): PrismContextBlock {
+  return {
+    kind: "active_app",
+    content: stableJson({
+      app: truncate(activeApp.processName || "Unknown", 40),
+      windowTitle: truncate(activeApp.title || "", 140),
+    }),
+  };
+}
+
 export function buildPrismContext(
   userMessage: string,
   source: PrismContextSource
@@ -190,6 +218,14 @@ export function buildPrismContext(
   const includeAll = intent.wantsOverview;
   const usedChars = { count: 0 };
   const blocks: PrismContextBlock[] = [];
+
+  // Active-app context first: it's the most useful "what am I working on" signal.
+  // Included whenever it's available and the user has the toggle on, so Prism stays
+  // ambiently context-aware (intent.wantsFocus is what makes a bare "this" resolve).
+  const hasActiveApp = source.includeActiveApp && !!source.activeApp?.available;
+  if (hasActiveApp) {
+    pushBlock(blocks, buildFocusBlock(source.activeApp as PrismActiveApp), usedChars);
+  }
 
   if (includeAll || intent.wantsTimer) {
     pushBlock(blocks, buildTimerBlock(source.timer), usedChars);

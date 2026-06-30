@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { buildPrismContext, type PrismContextSource } from "../lib/prismContext";
+import { buildPrismContext, type PrismContextSource, type PrismActiveApp } from "../lib/prismContext";
 import { tauriInvoke } from "../lib/tauri";
 import {
   MAX_CHAT_MESSAGES,
@@ -168,6 +168,18 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
     setIsLoading(true);
 
     try {
+      // Resolve foreground-app context on demand (no background polling). Opt-in via
+      // includeActiveApp; any failure degrades silently to "no active-app context".
+      let activeApp: PrismActiveApp | null = null;
+      if (sourceRef.current.includeActiveApp) {
+        try {
+          activeApp = await tauriInvoke<PrismActiveApp>("get_foreground_app");
+        } catch {
+          activeApp = null;
+        }
+        if (controller.signal.aborted || !isMountedRef.current) return;
+      }
+
       const response = await tauriInvoke<{
         reply: string;
         actions?: Array<{
@@ -191,7 +203,7 @@ export function usePrismAI(source: PrismContextSource): UsePrismAIReturn {
               role: item.role,
               content: truncate(item.content, MAX_MESSAGE_CHARS),
             })),
-            contextBlocks: buildPrismContext(trimmedMessage, sourceRef.current),
+            contextBlocks: buildPrismContext(trimmedMessage, { ...sourceRef.current, activeApp }),
             allowActions: actionMode,
           },
         },

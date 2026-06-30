@@ -12,6 +12,9 @@ interface PrismModuleProps {
   onSendMessage: (message: string) => Promise<void>;
   onToggleActionMode: (enabled: boolean) => void;
   onClearChat: () => void;
+  /** Whether Prism may read the foreground app (title + exe) for context. */
+  activeAppContext: boolean;
+  onToggleActiveAppContext: (enabled: boolean) => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -31,6 +34,8 @@ export function PrismModule({
   onSendMessage,
   onToggleActionMode,
   onClearChat,
+  activeAppContext,
+  onToggleActiveAppContext,
 }: PrismModuleProps) {
   const [inputValue, setInputValue] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -52,6 +57,17 @@ export function PrismModule({
           >
             {actionMode ? "auto-runs actions" : "chat only"}
           </span>
+          <motion.button
+            aria-pressed={activeAppContext}
+            title="When on, Prism can see your active app's name and window title for context. No screenshots, nothing stored."
+            className={`px-1.5 py-0.5 rounded text-[9px] ${
+              activeAppContext ? "bg-blue-500/25 text-blue-200" : "bg-white/10 text-white/60"
+            }`}
+            onClick={() => onToggleActiveAppContext(!activeAppContext)}
+            {...microInteractions.button}
+          >
+            {activeAppContext ? "Sees app: On" : "Sees app: Off"}
+          </motion.button>
           <motion.button
             aria-pressed={actionMode}
             className={`px-1.5 py-0.5 rounded text-[9px] ${

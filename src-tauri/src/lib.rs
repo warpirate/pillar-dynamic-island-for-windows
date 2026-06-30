@@ -859,6 +859,94 @@ fn is_foreground_fullscreen(_window: tauri::Window) -> Result<bool, String> {
     Ok(false)
 }
 
+/// Foreground-app context for Prism. Carries ONLY the active window's title and
+/// executable name — no screenshots, no content scraping, nothing persisted.
+#[derive(serde::Serialize, Default)]
+struct ForegroundApp {
+    title: String,
+    #[serde(rename = "processName")]
+    process_name: String,
+    available: bool,
+}
+
+/// Returns the foreground window's title + exe name so Prism can be context-aware
+/// ("knows what you're working on") privately. Skips our own overlay implicitly —
+/// the pill is a no-activate window, so it rarely becomes foreground.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+fn get_foreground_app() -> ForegroundApp {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::core::PWSTR;
+
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return ForegroundApp::default();
+        }
+
+        // Window title (truncated below for privacy/size).
+        let len = GetWindowTextLengthW(hwnd);
+        let mut title = String::new();
+        if len > 0 {
+            let mut buf = vec![0u16; (len + 1) as usize];
+            let copied = GetWindowTextW(hwnd, &mut buf);
+            if copied > 0 {
+                title = String::from_utf16_lossy(&buf[..copied as usize]);
+            }
+        }
+
+        // Executable name (basename) from the owning process.
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        let mut process_name = String::new();
+        if pid != 0 {
+            if let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                if !handle.is_invalid() {
+                    let mut buf = vec![0u16; 260];
+                    let mut size = buf.len() as u32;
+                    if QueryFullProcessImageNameW(
+                        handle,
+                        PROCESS_NAME_WIN32,
+                        PWSTR(buf.as_mut_ptr()),
+                        &mut size,
+                    )
+                    .is_ok()
+                        && size > 0
+                    {
+                        let full = String::from_utf16_lossy(&buf[..size as usize]);
+                        process_name = full
+                            .rsplit(|c| c == '\\' || c == '/')
+                            .next()
+                            .unwrap_or(&full)
+                            .to_string();
+                    }
+                    let _ = CloseHandle(handle);
+                }
+            }
+        }
+
+        let title: String = title.chars().take(140).collect();
+        ForegroundApp {
+            title,
+            process_name,
+            available: true,
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+fn get_foreground_app() -> ForegroundApp {
+    ForegroundApp::default()
+}
+
 /// Resize window and re-center in a single atomic operation
 /// Prevents visual glitches from separate resize + position calls
 #[cfg(desktop)]
@@ -2684,6 +2772,7 @@ pub fn run() {
             position_window,
             resize_and_center,
             is_foreground_fullscreen,
+            get_foreground_app,
             get_scale_factor,
             // Media session
             get_media_session,

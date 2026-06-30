@@ -1,6 +1,6 @@
 [package]
 name = "pillar"
-version = "0.1.0"
+version = "0.1.1"
 description = "Dynamic Island-style system overlay for Windows"
 authors = ["you"]
 edition = "2021"
@@ -49,6 +49,8 @@ features = [
   "Win32_Devices_Display",
   # Battery / Power (Win32 - simple, no WinRT apartment needed)
   "Win32_System_Power",
+  # Foreground app context for Prism (window title + exe name; no screenshots)
+  "Win32_System_Threading",
   # Async support
   "Foundation",
   "Foundation_Collections",
