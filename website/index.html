@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PILLAR — Dynamic Island for Windows</title>
+  <meta name="description" content="A sleek, Dynamic Island-style system overlay for Windows. Media, timers, notifications, volume and an AI assistant — in one glassy pill at the top of your screen." />
+  <meta name="theme-color" content="#0B0D12" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="PILLAR — Dynamic Island for Windows" />
+  <meta property="og:description" content="A sleek, Dynamic Island-style system overlay for Windows. Free & open source." />
+  <meta property="og:image" content="./pillar.svg" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" type="image/svg+xml" href="./pillar.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --bg-2: #0f1117;
+      --surface: rgba(255, 255, 255, 0.04);
+      --surface-hover: rgba(255, 255, 255, 0.07);
+      --border: rgba(255, 255, 255, 0.09);
+      --text: #f4f5f7;
+      --muted: rgba(244, 245, 247, 0.62);
+      --faint: rgba(244, 245, 247, 0.42);
+      --accent: #6ea8fe;
+      --accent-2: #b388ff;
+      --radius: 18px;
+      --max: 1120px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.55;
+      overflow-x: hidden;
+    }
+
+    /* Ambient gradient glows */
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        radial-gradient(60% 50% at 50% -10%, rgba(110, 168, 254, 0.18), transparent 70%),
+        radial-gradient(40% 40% at 85% 20%, rgba(179, 136, 255, 0.12), transparent 70%),
+        radial-gradient(50% 50% at 10% 60%, rgba(110, 168, 254, 0.08), transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+    a { color: inherit; text-decoration: none; }
+
+    /* ---------- Nav ---------- */
+    nav {
+      position: sticky; top: 0; z-index: 50;
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      background: rgba(11, 13, 18, 0.6);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: 0.02em; }
+    .brand img { width: 30px; height: 30px; border-radius: 8px; }
+    .nav-links { display: flex; align-items: center; gap: 22px; }
+    .nav-links a.muted { color: var(--muted); font-size: 14px; font-weight: 500; transition: color .2s; }
+    .nav-links a.muted:hover { color: var(--text); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 18px; border-radius: 999px; font-weight: 600; font-size: 14px;
+      border: 1px solid transparent; cursor: pointer; transition: transform .15s ease, background .2s, border-color .2s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #0b0d12; box-shadow: 0 6px 24px rgba(110, 168, 254, 0.28); }
+    .btn-primary:hover { box-shadow: 0 8px 30px rgba(110, 168, 254, 0.4); }
+    .btn-ghost { background: var(--surface); border-color: var(--border); color: var(--text); }
+    .btn-ghost:hover { background: var(--surface-hover); }
+    .btn-lg { padding: 14px 26px; font-size: 15px; }
+
+    /* ---------- Hero ---------- */
+    header { padding: 90px 0 40px; text-align: center; }
+    .pill-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 6px 14px; border-radius: 999px; border: 1px solid var(--border);
+      background: var(--surface); color: var(--muted); font-size: 13px; font-weight: 500; margin-bottom: 28px;
+    }
+    .pill-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: #34d399; box-shadow: 0 0 8px #34d399; }
+
+    h1 {
+      font-size: clamp(38px, 6.4vw, 72px); line-height: 1.04; font-weight: 800; letter-spacing: -0.025em;
+      background: linear-gradient(180deg, #ffffff, rgba(255,255,255,0.72));
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    h1 .grad { background: linear-gradient(120deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .sub { max-width: 640px; margin: 22px auto 0; font-size: clamp(16px, 2vw, 19px); color: var(--muted); }
+    .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 36px; }
+    .cta-note { margin-top: 16px; font-size: 13px; color: var(--faint); }
+
+    /* ---------- Live pill demo ---------- */
+    .demo-stage {
+      margin: 64px auto 0; max-width: 900px; height: 320px;
+      border: 1px solid var(--border); border-radius: 28px;
+      background:
+        radial-gradient(120% 100% at 50% 0%, rgba(255,255,255,0.05), transparent 60%),
+        linear-gradient(180deg, var(--bg-2), var(--bg));
+      position: relative; overflow: hidden;
+      display: flex; justify-content: center; padding-top: 26px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    .demo-stage .hint { position: absolute; bottom: 18px; left: 0; right: 0; text-align: center; font-size: 12.5px; color: var(--faint); }
+
+    .pill {
+      --w: 260px;
+      width: var(--w); height: 40px; border-radius: 22px;
+      background: linear-gradient(135deg, rgba(28,28,34,0.96), rgba(18,18,22,0.97));
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5), inset 0 1px 1px rgba(255,255,255,0.08);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px; color: var(--text); cursor: pointer; user-select: none;
+      transition: width .45s cubic-bezier(.22,1,.36,1), height .45s cubic-bezier(.22,1,.36,1), border-radius .45s;
+      position: relative; overflow: hidden;
+    }
+    .pill .row { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .pill .eq { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+    .pill .eq span { width: 3px; background: var(--accent); border-radius: 2px; animation: eq 1s ease-in-out infinite; }
+    .pill .eq span:nth-child(2){ animation-delay:.15s } .pill .eq span:nth-child(3){ animation-delay:.3s } .pill .eq span:nth-child(4){ animation-delay:.45s }
+    @keyframes eq { 0%,100%{ height:4px } 50%{ height:14px } }
+    .pill .clock { color: var(--muted); }
+
+    .pill .expanded { opacity: 0; pointer-events: none; position: absolute; inset: 0; padding: 16px; display: flex; flex-direction: column; gap: 12px; transition: opacity .3s ease .15s; }
+    .pill.open { --w: 380px; height: 200px; border-radius: 26px; }
+    .pill.open .collapsed { opacity: 0; }
+    .pill.open .expanded { opacity: 1; pointer-events: auto; }
+    .collapsed { display: flex; align-items: center; justify-content: space-between; width: 100%; transition: opacity .2s; }
+
+    .exp-head { display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--muted); }
+    .exp-card { background: rgba(255,255,255,0.05); border:1px solid var(--border); border-radius:12px; padding:10px 12px; display:flex; align-items:center; gap:10px; }
+    .exp-card .art { width:34px; height:34px; border-radius:8px; background:linear-gradient(135deg,var(--accent),var(--accent-2)); flex:none; }
+    .exp-card .meta { font-size:12px; line-height:1.3; }
+    .exp-card .meta b { font-size:13px; }
+    .exp-tabs { display:flex; gap:6px; }
+    .exp-tabs span { flex:1; text-align:center; font-size:11px; padding:6px 0; border-radius:8px; background:rgba(255,255,255,0.05); color:var(--muted); }
+    .exp-tabs span.active { background:rgba(255,255,255,0.14); color:var(--text); }
+    @media (prefers-reduced-motion: reduce){ .pill, .pill *{ transition:none !important; animation:none !important } }
+
+    /* ---------- Sections ---------- */
+    section { padding: 84px 0; }
+    .eyebrow { text-align:center; color: var(--accent); font-weight:600; font-size:13px; letter-spacing:.12em; text-transform:uppercase; }
+    h2 { text-align:center; font-size: clamp(28px, 4vw, 42px); font-weight:800; letter-spacing:-0.02em; margin-top:12px; }
+    .section-sub { text-align:center; color:var(--muted); max-width:560px; margin:14px auto 0; }
+
+    .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; margin-top:52px; }
+    @media (max-width: 880px){ .grid { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--surface); border:1px solid var(--border); border-radius: var(--radius);
+      padding: 26px; transition: transform .2s ease, background .2s, border-color .2s;
+    }
+    .card:hover { transform: translateY(-3px); background: var(--surface-hover); border-color: rgba(255,255,255,0.16); }
+    .card .ico { width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:20px; background: linear-gradient(135deg, rgba(110,168,254,0.18), rgba(179,136,255,0.14)); border:1px solid var(--border); margin-bottom:16px; }
+    .card h3 { font-size:17px; font-weight:700; margin-bottom:7px; }
+    .card p { color: var(--muted); font-size:14.5px; }
+
+    /* Steps */
+    .steps { display:grid; grid-template-columns: repeat(3,1fr); gap:18px; margin-top:52px; }
+    @media (max-width: 880px){ .steps { grid-template-columns: 1fr; } }
+    .step { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:26px; }
+    .step .n { font-size:13px; font-weight:700; color:var(--accent); }
+    .step h3 { margin:10px 0 6px; font-size:16px; }
+    .step p { color:var(--muted); font-size:14px; }
+
+    .tech { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:40px; }
+    .tech span { font-size:13px; color:var(--muted); border:1px solid var(--border); background:var(--surface); padding:7px 14px; border-radius:999px; }
+
+    /* Download band */
+    .download {
+      text-align:center; border:1px solid var(--border); border-radius:28px; padding:56px 24px;
+      background: radial-gradient(80% 120% at 50% 0%, rgba(110,168,254,0.14), transparent 60%), var(--surface);
+      margin: 20px 0 0;
+    }
+    .download h2 { margin-top:0; }
+    .os-note { color:var(--faint); font-size:13px; margin-top:14px; }
+
+    footer { border-top:1px solid var(--border); padding:40px 0; margin-top:90px; }
+    .foot-inner { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; color:var(--muted); font-size:14px; }
+    .foot-inner a { color:var(--muted); transition:color .2s; }
+    .foot-inner a:hover { color:var(--text); }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top"><img src="./pillar.svg" alt="PILLAR" /> PILLAR</a>
+      <div class="nav-links">
+        <a class="muted" href="#features">Features</a>
+        <a class="muted" href="#install">Install</a>
+        <a class="muted" href="https://github.com/warpirate/pillar-dynamic-island-for-windows" target="_blank" rel="noopener">GitHub</a>
+        <a class="btn btn-primary" href="https://github.com/warpirate/pillar-dynamic-island-for-windows/releases/latest" target="_blank" rel="noopener">Download</a>
+      </div>
+    </div>
+  </nav>
+
+  <header id="top">
+    <div class="wrap">
+      <span class="pill-badge"><span class="dot"></span> Free &amp; open source · Windows 10/11</span>
+      <h1>The <span class="grad">Dynamic Island</span><br />comes to Windows.</h1>
+      <p class="sub">PILLAR is a sleek, always-on-top overlay that lives at the top of your screen — media controls, timers, notifications, volume, battery, and an AI assistant, all in one glassy pill. Near-zero resource use when idle.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary btn-lg" href="https://github.com/warpirate/pillar-dynamic-island-for-windows/releases/latest" target="_blank" rel="noopener">⬇ Download for Windows</a>
+        <a class="btn btn-ghost btn-lg" href="https://github.com/warpirate/pillar-dynamic-island-for-windows" target="_blank" rel="noopener">★ Star on GitHub</a>
+      </div>
+      <p class="cta-note">Installer (.exe / .msi) from GitHub Releases · MIT licensed</p>
+
+      <!-- Live interactive pill -->
+      <div class="demo-stage">
+        <div class="pill" id="demoPill" role="button" tabindex="0" aria-label="Interactive PILLAR demo — click to expand">
+          <div class="collapsed">
+            <div class="row">
+              <span class="eq"><span></span><span></span><span></span><span></span></span>
+              Now Playing
+            </div>
+            <div class="row clock">9:41</div>
+          </div>
+          <div class="expanded">
+            <div class="exp-head"><span>PILLAR</span><span>9:41</span></div>
+            <div class="exp-card">
+              <div class="art"></div>
+              <div class="meta"><b>Midnight City</b><br/>M83 · paused → playing</div>
+            </div>
+            <div class="exp-tabs">
+              <span class="active">Media</span><span>Timer</span><span>Notifs</span><span>AI</span>
+            </div>
+          </div>
+        </div>
+        <div class="hint">↑ Click the pill to expand · just like the real app</div>
+      </div>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="wrap">
+      <p class="eyebrow">Everything in one pill</p>
+      <h2>Glanceable. Native. Out of the way.</h2>
+      <p class="section-sub">Hover to peek, click to expand. PILLAR stays invisible until you need it.</p>
+      <div class="grid">
+        <div class="card"><div class="ico">🎵</div><h3>Media controls</h3><p>Play / pause, skip, scrub and see what's playing across any app — read straight from Windows SMTC.</p></div>
+        <div class="card"><div class="ico">⏱</div><h3>Focus timers</h3><p>Pomodoro-style timers with a progress ring on the pill and a desktop alert when time's up.</p></div>
+        <div class="card"><div class="ico">🔔</div><h3>Notifications</h3><p>Live notification toasts that fold into the pill, with a scrollable history you can clear.</p></div>
+        <div class="card"><div class="ico">🔊</div><h3>Volume &amp; devices</h3><p>System volume, per-app mixer, output device switching and brightness — without opening Settings.</p></div>
+        <div class="card"><div class="ico">🤖</div><h3>Prism AI</h3><p>An assistant that can read your context and run actions — start a timer, change volume, more.</p></div>
+        <div class="card"><div class="ico">✓</div><h3>Focus &amp; tasks</h3><p>Quick tasks, notes and an agenda in a tidy productivity tab, backed up locally.</p></div>
+      </div>
+      <div class="tech">
+        <span>Built with Tauri 2</span><span>React 18</span><span>TypeScript</span><span>Rust backend</span><span>~Lightweight</span><span>Always-on-top</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <p class="eyebrow">Get started</p>
+      <h2>Up and running in a minute</h2>
+      <div class="steps">
+        <div class="step"><div class="n">STEP 1</div><h3>Download the installer</h3><p>Grab the latest <code>.exe</code> (or <code>.msi</code>) from GitHub Releases — no account needed.</p></div>
+        <div class="step"><div class="n">STEP 2</div><h3>Run it</h3><p>Windows 10/11. If SmartScreen appears, choose “More info → Run anyway” (unsigned open-source build).</p></div>
+        <div class="step"><div class="n">STEP 3</div><h3>Look up</h3><p>The pill appears at the top-center of your screen. Hover to peek, click to expand.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="download">
+        <p class="eyebrow">Free forever</p>
+        <h2>Bring the island to your desktop.</h2>
+        <div class="cta-row" style="margin-top:28px">
+          <a class="btn btn-primary btn-lg" href="https://github.com/warpirate/pillar-dynamic-island-for-windows/releases/latest" target="_blank" rel="noopener">⬇ Download latest release</a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/warpirate/pillar-dynamic-island-for-windows" target="_blank" rel="noopener">View source</a>
+        </div>
+        <p class="os-note">All downloads are served from GitHub Releases.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap foot-inner">
+      <div class="brand"><img src="./pillar.svg" alt="PILLAR" style="width:24px;height:24px;border-radius:6px" /> PILLAR — Dynamic Island for Windows</div>
+      <div style="display:flex; gap:20px;">
+        <a href="https://github.com/warpirate/pillar-dynamic-island-for-windows" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/warpirate/pillar-dynamic-island-for-windows/releases/latest" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/warpirate/pillar-dynamic-island-for-windows/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Interactive demo pill: click / Enter / Space toggles expand (mirrors the real app)
+    var pill = document.getElementById('demoPill');
+    function toggle(){ pill.classList.toggle('open'); }
+    pill.addEventListener('click', toggle);
+    pill.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); }});
+    // Gentle auto-demo once after load
+    setTimeout(function(){ pill.classList.add('open'); setTimeout(function(){ pill.classList.remove('open'); }, 2600); }, 1400);
+  </script>
+</body>
+</html>
