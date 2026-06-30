@@ -15,7 +15,7 @@ export const APPEARANCE_DEFAULTS: AppearanceSettings = {
   mode: "island",
   opacity: 94,
   accentColor: "#EB0028",
-  useAlbumAccent: false,
+  useAlbumAccent: true,
 };
 
 export const ACCENT_PRESETS = [
@@ -75,7 +75,7 @@ export function useAppearance() {
             mode: (loaded.appearance.mode as PillMode) || APPEARANCE_DEFAULTS.mode,
             opacity: loaded.appearance.opacity ?? APPEARANCE_DEFAULTS.opacity,
             accentColor: loaded.appearance.accent_color || APPEARANCE_DEFAULTS.accentColor,
-            useAlbumAccent: loaded.appearance.use_album_accent ?? false,
+            useAlbumAccent: loaded.appearance.use_album_accent ?? true,
           }
         : APPEARANCE_DEFAULTS;
 
@@ -85,7 +85,7 @@ export function useAppearance() {
         setSaved(merged);
         // Save migrated data to Rust backend
         const fullSettings = loaded || {
-          appearance: { mode: "island", opacity: 94, accent_color: "#EB0028", use_album_accent: false },
+          appearance: { mode: "island", opacity: 94, accent_color: "#EB0028", use_album_accent: true },
           motion: { animation_speed: 1.0, reduced_motion_override: "system" },
           behavior: { launch_at_startup: false, pause_other_sessions: false },
           timer: { last_custom_label: "", last_custom_minutes: 25 },

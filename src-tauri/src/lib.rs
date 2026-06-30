@@ -162,7 +162,7 @@ pub struct AppearanceSettingsData {
     pub opacity: u32,
     #[serde(default = "default_accent_color")]
     pub accent_color: String,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub use_album_accent: bool,
 }
 
@@ -248,7 +248,7 @@ fn default_true() -> bool { true }
 
 impl Default for AppearanceSettingsData {
     fn default() -> Self {
-        Self { mode: default_mode(), opacity: default_opacity(), accent_color: default_accent_color(), use_album_accent: false }
+        Self { mode: default_mode(), opacity: default_opacity(), accent_color: default_accent_color(), use_album_accent: true }
     }
 }
 impl Default for MotionSettingsData {
@@ -945,6 +945,51 @@ fn get_foreground_app() -> ForegroundApp {
 #[tauri::command]
 fn get_foreground_app() -> ForegroundApp {
     ForegroundApp::default()
+}
+
+// System monitor: a single shared sysinfo::System kept alive across calls so CPU
+// usage is a valid delta between refreshes (the frontend polls every ~2.5s).
+static SYSTEM_MONITOR: once_cell::sync::Lazy<std::sync::Mutex<sysinfo::System>> =
+    once_cell::sync::Lazy::new(|| std::sync::Mutex::new(sysinfo::System::new()));
+
+#[derive(serde::Serialize, Default)]
+struct SystemStats {
+    #[serde(rename = "cpuPercent")]
+    cpu_percent: f32,
+    #[serde(rename = "memUsedMb")]
+    mem_used_mb: u64,
+    #[serde(rename = "memTotalMb")]
+    mem_total_mb: u64,
+    #[serde(rename = "memPercent")]
+    mem_percent: f32,
+}
+
+/// Returns current CPU% (system-wide) and RAM usage. CPU is the delta since the
+/// previous call, so the first reading after launch reads ~0 until the next poll.
+#[tauri::command]
+fn get_system_stats() -> SystemStats {
+    let mut sys = match SYSTEM_MONITOR.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    sys.refresh_cpu_usage();
+    sys.refresh_memory();
+
+    let cpu_percent = sys.global_cpu_usage();
+    let total = sys.total_memory(); // bytes
+    let used = sys.used_memory(); // bytes
+    let mem_percent = if total > 0 {
+        (used as f64 / total as f64 * 100.0) as f32
+    } else {
+        0.0
+    };
+
+    SystemStats {
+        cpu_percent,
+        mem_used_mb: used / 1024 / 1024,
+        mem_total_mb: total / 1024 / 1024,
+        mem_percent,
+    }
 }
 
 /// Resize window and re-center in a single atomic operation
@@ -2773,6 +2818,7 @@ pub fn run() {
             resize_and_center,
             is_foreground_fullscreen,
             get_foreground_app,
+            get_system_stats,
             get_scale_factor,
             // Media session
             get_media_session,

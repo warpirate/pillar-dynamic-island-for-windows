@@ -26,6 +26,7 @@ import { MediaExpanded, MediaIndicator } from "./modules/MediaModule";
 import { QuickSettings } from "./modules/VolumeModule";
 import { PrismModule } from "./modules/PrismModule";
 import { ProductivityModule } from "./modules/ProductivityModule";
+import { SystemMonitor } from "./modules/SystemMonitor";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
 import { createFocusTrap } from "../../utils/focusTrap";
 import { tauriInvoke } from "../../lib/tauri";
@@ -1489,6 +1490,8 @@ export function Pill() {
                     exit={{ opacity: 0, x: 20 }}
                     transition={{ duration: panelTransitionDuration }}
                   >
+                    {/* Live CPU/RAM monitor — only polls while this tab is open. */}
+                    <SystemMonitor enabled={activeTab === "settings"} accentColor={effectiveAccentColor} />
                     <QuickSettings
                       volume={volume}
                       onVolumeChange={setVolume}

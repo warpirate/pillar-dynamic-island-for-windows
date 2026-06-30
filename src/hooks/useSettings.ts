@@ -56,7 +56,7 @@ export const SETTINGS_DEFAULTS: AppSettings = {
     mode: "island",
     opacity: 94,
     accent_color: "#EB0028",
-    use_album_accent: false,
+    use_album_accent: true,
   },
   motion: {
     animation_speed: 1.0,
