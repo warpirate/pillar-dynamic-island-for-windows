@@ -31,6 +31,10 @@ interface UsePerAppMixerReturn {
 export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
   const [sessions, setSessions] = useState<AudioSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // Render-time mirror so mutation callbacks can snapshot the previous value
+  // for rollback if the backend call fails.
+  const sessionsRef = useRef<AudioSession[]>([]);
+  sessionsRef.current = sessions;
 
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isPendingRef = useRef(false);
@@ -91,42 +95,62 @@ export function usePerAppMixer(pollInterval = 3000): UsePerAppMixerReturn {
     const clampedVolume = Math.max(0, Math.min(1, volume));
     // Mark user as active
     triggerActivity();
-    try {
-      const caps = await platformApi.getCapabilities();
-      if (!caps.perAppMixer) return;
-      await platformApi.setSessionVolume(processId, clampedVolume);
-      clearError("audio_mixer_control");
-    } catch (e) {
-      handleError("audio_mixer_control", e instanceof Error ? e : "Failed to set app volume");
-    }
-    
-    // Update local state optimistically
+    const previous = sessionsRef.current.find(s => s.processId === processId);
+    // Optimistic update; rolled back below if the backend rejects the change
     setSessions(prev => prev.map(s =>
       s.processId === processId
         ? { ...s, volume: clampedVolume }
         : s
     ));
+    try {
+      const caps = await platformApi.getCapabilities();
+      if (!caps.perAppMixer) {
+        if (previous) setSessions(prev => prev.map(s =>
+          s.processId === processId ? { ...s, volume: previous.volume } : s
+        ));
+        return;
+      }
+      await platformApi.setSessionVolume(processId, clampedVolume);
+      clearError("audio_mixer_control");
+    } catch (e) {
+      handleError("audio_mixer_control", e instanceof Error ? e : "Failed to set app volume");
+      if (previous) {
+        setSessions(prev => prev.map(s =>
+          s.processId === processId ? { ...s, volume: previous.volume } : s
+        ));
+      }
+    }
   }, [clearError, handleError, triggerActivity]);
 
   // Set session mute
   const setSessionMute = useCallback(async (processId: number, muted: boolean) => {
     // Mark user as active
     triggerActivity();
-    try {
-      const caps = await platformApi.getCapabilities();
-      if (!caps.perAppMixer) return;
-      await platformApi.setSessionMute(processId, muted);
-      clearError("audio_mixer_control");
-    } catch (e) {
-      handleError("audio_mixer_control", e instanceof Error ? e : "Failed to set app mute");
-    }
-    
-    // Update local state optimistically
+    const previous = sessionsRef.current.find(s => s.processId === processId);
+    // Optimistic update; rolled back below if the backend rejects the change
     setSessions(prev => prev.map(s =>
       s.processId === processId
         ? { ...s, isMuted: muted }
         : s
     ));
+    try {
+      const caps = await platformApi.getCapabilities();
+      if (!caps.perAppMixer) {
+        if (previous) setSessions(prev => prev.map(s =>
+          s.processId === processId ? { ...s, isMuted: previous.isMuted } : s
+        ));
+        return;
+      }
+      await platformApi.setSessionMute(processId, muted);
+      clearError("audio_mixer_control");
+    } catch (e) {
+      handleError("audio_mixer_control", e instanceof Error ? e : "Failed to set app mute");
+      if (previous) {
+        setSessions(prev => prev.map(s =>
+          s.processId === processId ? { ...s, isMuted: previous.isMuted } : s
+        ));
+      }
+    }
   }, [clearError, handleError, triggerActivity]);
 
   // Start polling function

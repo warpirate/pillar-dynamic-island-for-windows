@@ -147,9 +147,20 @@ export function useGracefulDegradation(
       clearTimeout(existingTimeout);
       retryTimeoutsRef.current.delete(featureName);
     }
-    
-    setFeatureStatus(featureName, "available");
-  }, [setFeatureStatus]);
+
+    // A confirmed success replenishes the retry budget; preserving the old
+    // count meant a handful of lifetime errors would permanently latch a
+    // currently-working feature as unavailable.
+    setFeatureStates(prev => {
+      const newState = new Map(prev);
+      newState.set(featureName, {
+        status: "available",
+        lastChecked: Date.now(),
+        retryCount: 0,
+      });
+      return newState;
+    });
+  }, []);
 
   // Retry a feature
   const retryFeature = useCallback(async (featureName: string) => {

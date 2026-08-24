@@ -70,6 +70,9 @@ export function useCrashRecovery(
   const [isRecovering, setIsRecovering] = useState(false);
   const recoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
+  // Synchronous mirror of crashHistory so loop detection inside reportCrash
+  // always counts every recorded crash, even rapid back-to-back ones.
+  const crashHistoryRef = useRef<CrashReport[]>([]);
 
   // Load crash history from localStorage on mount
   useEffect(() => {
@@ -88,8 +91,9 @@ export function useCrashRecovery(
               typeof (crash as CrashReport).id === "string" &&
               typeof (crash as CrashReport).timestamp === "number" &&
               Date.now() - (crash as CrashReport).timestamp < 86400000
-          );
-          setCrashHistory(recent.slice(0, maxCrashReports));
+          ).slice(0, maxCrashReports);
+          crashHistoryRef.current = recent;
+          setCrashHistory(recent);
         }
       }
     } catch {
@@ -140,28 +144,41 @@ export function useCrashRecovery(
       appVersion: (import.meta as any).env?.VITE_APP_VERSION || "unknown",
     };
 
-    setCrashHistory(prev => {
-      const newHistory = [crashReport, ...prev].slice(0, maxCrashReports);
-      saveCrashHistory(newHistory);
-      return newHistory;
-    });
+    const newHistory = [crashReport, ...crashHistoryRef.current].slice(0, maxCrashReports);
+    crashHistoryRef.current = newHistory;
+    saveCrashHistory(newHistory);
+    setCrashHistory(newHistory);
 
     // Route through logger so backend gets a persistent record.
     log.error("Crash reported", crashReport);
 
-    // Trigger auto-recovery if enabled and crash is severe
+    // Trigger auto-recovery if enabled, the crash is severe, and we are not
+    // already in a crash loop. Reloading into a deterministic crash would
+    // otherwise reboot-loop forever at ~autoRecoveryDelay intervals.
     if (enableAutoRecovery && (severity === "severe" || severity === "critical")) {
+      const now = Date.now();
+      const recentCount = newHistory.filter(
+        (c) => now - c.timestamp < timeWindow
+      ).length;
+
+      if (recentCount >= crashThreshold) {
+        log.warn(
+          `Crash loop detected (${recentCount} crashes in ${Math.round(timeWindow / 1000)}s); auto-recovery suspended`
+        );
+        return;
+      }
+
       if (recoveryTimeoutRef.current) {
         clearTimeout(recoveryTimeoutRef.current);
       }
-      
+
       recoveryTimeoutRef.current = setTimeout(() => {
         if (isMountedRef.current) {
           triggerRecovery();
         }
       }, autoRecoveryDelay);
     }
-  }, [maxCrashReports, enableAutoRecovery, autoRecoveryDelay]);
+  }, [maxCrashReports, enableAutoRecovery, autoRecoveryDelay, timeWindow, crashThreshold, saveCrashHistory]);
 
   // Calculate recent crash count
   const recentCrashCount = crashHistory.filter(
@@ -209,7 +226,10 @@ export function useCrashRecovery(
     log.warn("Starting recovery sequence");
 
     try {
-      // 1. Clear all caches
+      // Clear cache storage only. User data in localStorage (productivity
+      // tasks, notes, timer stats, Prism history) is NOT app-state that a
+      // render crash can corrupt — it is parsed defensively everywhere — so
+      // wiping it on every crash would destroy unrelated user work.
       if (typeof window !== "undefined" && "caches" in window) {
         const cacheNames = await caches.keys();
         await Promise.all(
@@ -217,14 +237,7 @@ export function useCrashRecovery(
         );
       }
 
-      // 2. Clear localStorage (except crash history)
-      const crashHistoryData = localStorage.getItem("pillar_crash_history");
-      localStorage.clear();
-      if (crashHistoryData) {
-        localStorage.setItem("pillar_crash_history", crashHistoryData);
-      }
-
-      // 3. Reload the page
+      // Reload the page
       setTimeout(() => {
         window.location.reload();
       }, 500);

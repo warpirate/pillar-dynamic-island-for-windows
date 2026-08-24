@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import type { AudioSession } from "../../../hooks/usePerAppMixer";
 import { microInteractions } from "../animations";
 
@@ -16,22 +16,44 @@ interface AppVolumeSliderProps {
 function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSliderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [localVolume, setLocalVolume] = useState(session.volume);
+  // Pointer-state ref mirrors isDragging so handlers always see live state.
+  const isDraggingRef = useRef(false);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newVolume = parseInt(e.target.value, 10) / 100;
     setLocalVolume(newVolume);
-  }, []);
-
-  const handleMouseUp = useCallback(() => {
-    if (isDragging) {
-      onVolumeChange(session.processId, localVolume);
-      setIsDragging(false);
+    // Keyboard interaction fires onChange without pointer events: commit
+    // immediately so keyboard users can adjust per-app volume.
+    if (!isDraggingRef.current) {
+      onVolumeChange(session.processId, newVolume);
     }
-  }, [isDragging, localVolume, onVolumeChange, session.processId]);
+  }, [onVolumeChange, session.processId]);
+
+  const endDrag = useCallback(() => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    onVolumeChange(session.processId, localVolume);
+  }, [localVolume, onVolumeChange, session.processId]);
 
   const handleMouseDown = useCallback(() => {
+    isDraggingRef.current = true;
     setIsDragging(true);
   }, []);
+
+  // A range input keeps pointer capture while dragging, so the release can land
+  // outside the element. Listen on the window rather than using onMouseLeave,
+  // which fires whenever the cursor crosses the thin track mid-drag and would
+  // commit early — then every later move would fire its own backend call.
+  useEffect(() => {
+    if (!isDragging) return;
+    window.addEventListener("mouseup", endDrag);
+    window.addEventListener("touchend", endDrag);
+    return () => {
+      window.removeEventListener("mouseup", endDrag);
+      window.removeEventListener("touchend", endDrag);
+    };
+  }, [isDragging, endDrag]);
 
   const displayVolume = isDragging ? localVolume : session.volume;
   const displayPercent = Math.round(displayVolume * 100);
@@ -122,8 +144,9 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
             value={displayPercent}
             onChange={handleChange}
             onMouseDown={handleMouseDown}
-            onMouseUp={handleMouseUp}
-            onTouchEnd={handleMouseUp}
+            onMouseUp={endDrag}
+            onTouchEnd={endDrag}
+            onBlur={endDrag}
             aria-label={`${session.appName} volume`}
             aria-valuemin={0}
             aria-valuemax={100}

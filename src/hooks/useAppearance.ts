@@ -64,47 +64,53 @@ export function useAppearance() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      // First check if there's old localStorage data to migrate
-      const migrated = await migrateLocalStorage();
+      try {
+        // First check if there's old localStorage data to migrate
+        const migrated = await migrateLocalStorage();
 
-      const loaded = await tauriInvoke<AppSettings>("load_settings");
-      if (!mounted) return;
+        const loaded = await tauriInvoke<AppSettings>("load_settings");
+        if (!mounted) return;
 
-      const fromBackend: AppearanceSettings = loaded
-        ? {
-            mode: (loaded.appearance.mode as PillMode) || APPEARANCE_DEFAULTS.mode,
-            opacity: loaded.appearance.opacity ?? APPEARANCE_DEFAULTS.opacity,
-            accentColor: loaded.appearance.accent_color || APPEARANCE_DEFAULTS.accentColor,
-            useAlbumAccent: loaded.appearance.use_album_accent ?? true,
-          }
-        : APPEARANCE_DEFAULTS;
+        const fromBackend: AppearanceSettings = loaded
+          ? {
+              mode: (loaded.appearance.mode as PillMode) || APPEARANCE_DEFAULTS.mode,
+              opacity: loaded.appearance.opacity ?? APPEARANCE_DEFAULTS.opacity,
+              accentColor: loaded.appearance.accent_color || APPEARANCE_DEFAULTS.accentColor,
+              useAlbumAccent: loaded.appearance.use_album_accent ?? true,
+            }
+          : APPEARANCE_DEFAULTS;
 
-      // If we migrated localStorage data, merge it and save
-      if (migrated) {
-        const merged = { ...fromBackend, ...migrated };
-        setSaved(merged);
-        // Save migrated data to Rust backend
-        const fullSettings = loaded || {
-          appearance: { mode: "island", opacity: 94, accent_color: "#EB0028", use_album_accent: true },
-          motion: { animation_speed: 1.0, reduced_motion_override: "system" },
-          behavior: { launch_at_startup: false, pause_other_sessions: false },
-          timer: { last_custom_label: "", last_custom_minutes: 25 },
-          layout: {
-            visible_tabs: { timer: true, media: true, notifications: true, settings: true, prism: true, productivity: true },
-            idle_indicators: { media: true, battery: true, notifications: true },
-          },
-        };
-        fullSettings.appearance = {
-          mode: merged.mode,
-          opacity: merged.opacity,
-          accent_color: merged.accentColor,
-          use_album_accent: merged.useAlbumAccent,
-        };
-        await tauriInvoke("save_settings", { settings: fullSettings });
-      } else {
-        setSaved(fromBackend);
+        // If we migrated localStorage data, merge it and save
+        if (migrated) {
+          const merged = { ...fromBackend, ...migrated };
+          setSaved(merged);
+          // Save migrated data to Rust backend
+          const fullSettings = loaded || {
+            appearance: { mode: "island", opacity: 94, accent_color: "#EB0028", use_album_accent: true },
+            motion: { animation_speed: 1.0, reduced_motion_override: "system" },
+            behavior: { launch_at_startup: false, pause_other_sessions: false },
+            timer: { last_custom_label: "", last_custom_minutes: 25 },
+            layout: {
+              visible_tabs: { timer: true, media: true, notifications: true, settings: true, prism: true, productivity: true },
+              idle_indicators: { media: true, battery: true, notifications: true },
+            },
+          };
+          fullSettings.appearance = {
+            mode: merged.mode,
+            opacity: merged.opacity,
+            accent_color: merged.accentColor,
+            use_album_accent: merged.useAlbumAccent,
+          };
+          await tauriInvoke("save_settings", { settings: fullSettings });
+        } else {
+          setSaved(fromBackend);
+        }
+      } catch (e) {
+        // Backend hiccup: degrade to defaults instead of a permanent skeleton.
+        console.warn("[useAppearance] Failed to load appearance settings", e);
+      } finally {
+        if (mounted) setIsLoaded(true);
       }
-      setIsLoaded(true);
     })();
     return () => { mounted = false; };
   }, []);
@@ -122,37 +128,54 @@ export function useAppearance() {
 
   const save = useCallback(async () => {
     if (draft) {
+      const previous = saved;
       setSaved(draft);
       setDraft(null);
-      // Save to Rust backend
-      const loaded = await tauriInvoke<AppSettings>("load_settings");
-      if (loaded) {
-        loaded.appearance = {
-          mode: draft.mode,
-          opacity: draft.opacity,
-          accent_color: draft.accentColor,
-          use_album_accent: draft.useAlbumAccent,
-        };
-        await tauriInvoke("save_settings", { settings: loaded });
+      try {
+        // Save to Rust backend
+        const loaded = await tauriInvoke<AppSettings>("load_settings");
+        if (loaded) {
+          loaded.appearance = {
+            mode: draft.mode,
+            opacity: draft.opacity,
+            accent_color: draft.accentColor,
+            use_album_accent: draft.useAlbumAccent,
+          };
+          await tauriInvoke("save_settings", { settings: loaded });
+        }
+      } catch (e) {
+        // Persist failed: undo the optimistic UI so the user isn't left with
+        // settings that silently revert on next launch.
+        console.warn("[useAppearance] Failed to save appearance", e);
+        setSaved(previous);
+        setDraft(draft);
+        throw e;
       }
     }
-  }, [draft]);
+  }, [draft, saved]);
 
   const reset = useCallback(async () => {
     const defaults = { ...APPEARANCE_DEFAULTS };
+    const previous = saved;
     setSaved(defaults);
     setDraft(null);
-    const loaded = await tauriInvoke<AppSettings>("load_settings");
-    if (loaded) {
-      loaded.appearance = {
-        mode: defaults.mode,
-        opacity: defaults.opacity,
-        accent_color: defaults.accentColor,
-        use_album_accent: defaults.useAlbumAccent,
-      };
-      await tauriInvoke("save_settings", { settings: loaded });
+    try {
+      const loaded = await tauriInvoke<AppSettings>("load_settings");
+      if (loaded) {
+        loaded.appearance = {
+          mode: defaults.mode,
+          opacity: defaults.opacity,
+          accent_color: defaults.accentColor,
+          use_album_accent: defaults.useAlbumAccent,
+        };
+        await tauriInvoke("save_settings", { settings: loaded });
+      }
+    } catch (e) {
+      console.warn("[useAppearance] Failed to reset appearance", e);
+      setSaved(previous);
+      throw e;
     }
-  }, []);
+  }, [saved]);
 
   const discard = useCallback(() => {
     setDraft(null);

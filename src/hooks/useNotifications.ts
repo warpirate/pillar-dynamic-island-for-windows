@@ -210,6 +210,10 @@ export function useNotifications(pollInterval = FALLBACK_POLL_MS): UseNotificati
       clearError("notifications_dismiss");
     } catch (e) {
       handleError("notifications_dismiss", e instanceof Error ? e : "Failed to dismiss notification");
+      // Backend refused or failed: leave the item in place so this list stays
+      // in sync with Windows Action Center instead of the entry silently
+      // resurrecting on the next poll.
+      return;
     }
     setNotifications(prev => {
       const updated = prev.filter(n => n.id !== id);

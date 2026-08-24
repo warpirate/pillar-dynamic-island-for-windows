@@ -60,7 +60,9 @@ use windows::Win32::Devices::Display::{
     PHYSICAL_MONITOR,
 };
 #[cfg(target_os = "windows")]
-use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTOPRIMARY};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTOPRIMARY,
+};
 #[cfg(target_os = "windows")]
 use windows::core::{HSTRING, Interface};
 #[cfg(target_os = "windows")]
@@ -315,8 +317,20 @@ fn load_settings() -> Result<AppSettings, String> {
         return Ok(AppSettings::default());
     }
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let settings: AppSettings = serde_json::from_str(&content).unwrap_or_default();
-    Ok(settings)
+    match serde_json::from_str::<AppSettings>(&content) {
+        Ok(settings) => Ok(settings),
+        Err(e) => {
+            // Preserve the corrupt file for diagnostics instead of silently
+            // resetting on top of it; degrade to defaults so the UI still loads.
+            let backup = path.with_extension("json.corrupt");
+            eprintln!(
+                "[PILLAR] settings.json is corrupt ({e}); preserved as {} and loading defaults",
+                backup.display()
+            );
+            let _ = std::fs::rename(&path, &backup);
+            Ok(AppSettings::default())
+        }
+    }
 }
 
 #[tauri::command]
@@ -326,7 +340,14 @@ fn save_settings(settings: AppSettings) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    // Write-then-rename so a crash mid-write can never truncate settings.json
+    // (fs::rename replaces the destination atomically, incl. on Windows).
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     Ok(())
 }
 
@@ -565,11 +586,13 @@ fn parse_model_output(raw_content: &str, allow_actions: bool) -> (String, Option
 
 #[tauri::command]
 async fn prism_chat(request: PrismChatRequest) -> Result<PrismChatResponse, String> {
-    // Runtime env var first (for dev). Then compile-time if set at build (for .exe). No key in source.
+    // Runtime env var only. Never bake the key into the binary via option_env! —
+    // embedded literals are trivially recoverable from a distributed .exe.
     let api_key: String = std::env::var("GROQ_API_KEY")
         .ok()
-        .or_else(|| option_env!("GROQ_API_KEY").map(String::from))
-        .ok_or_else(|| "GROQ_API_KEY is not set. Set it before building or running PILLAR.".to_string())?;
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .ok_or_else(|| "GROQ_API_KEY is not set. Set it before running PILLAR.".to_string())?;
 
     let user_message = truncate_chars(request.user_message.trim(), MAX_MESSAGE_CHARS);
     if user_message.is_empty() {
@@ -681,8 +704,23 @@ async fn prism_chat(request: PrismChatRequest) -> Result<PrismChatResponse, Stri
 const POLL_MAX_ITERS: usize = 30;
 const POLL_SLEEP_MS: u64 = 5;
 
+/// Ensure COM is initialized on the current thread (multithreaded apartment).
+/// Required because blocking commands run on runtime worker threads (not the
+/// COM-initialized main thread). Safe to call repeatedly; a different existing
+/// apartment mode (RPC_E_CHANGED_MODE) is ignored.
+#[cfg(target_os = "windows")]
+fn ensure_com_initialized() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ensure_com_initialized() {}
+
 #[cfg(target_os = "windows")]
 fn poll_session_manager() -> Result<GlobalSystemMediaTransportControlsSessionManager, String> {
+    ensure_com_initialized();
     let op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()
         .map_err(|e| format!("Failed to request session manager: {}", e))?;
 
@@ -802,60 +840,67 @@ fn position_window(_window: tauri::Window) -> Result<(), String> {
 /// We don't want: browser F11 fullscreen, any app maximized/fullscreen → false.
 /// Uses window style: WS_POPUP or borderless (no caption) = content fullscreen; normal caption = window fullscreen.
 #[cfg(target_os = "windows")]
-#[tauri::command]
-fn is_foreground_fullscreen(window: tauri::Window) -> Result<bool, String> {
-    // Get monitor info, return false if unavailable (safe default)
-    let monitor = match window.primary_monitor() {
-        Ok(Some(m)) => m,
-        _ => return Ok(false),
-    };
+#[tauri::command(async)]
+fn is_foreground_fullscreen() -> Result<bool, String> {
+    unsafe {
+        // Get foreground window handle
+        let hwnd = GetForegroundWindow();
+        if hwnd.0.is_null() {
+            return Ok(false);
+        }
 
-    let mon_size = monitor.size();
-    let mon_w = mon_size.width as i32;
-    let mon_h = mon_size.height as i32;
+        // Get window rectangle
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_err() {
+            return Ok(false);
+        }
 
-    // Get foreground window handle
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.0.is_null() {
-        return Ok(false);
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+
+        // Compare against the primary monitor (where the pill lives)
+        let origin = windows::Win32::Foundation::POINT { x: 0, y: 0 };
+        let hmonitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+        if hmonitor.is_invalid() {
+            return Ok(false);
+        }
+
+        let mut info = MONITORINFO::default();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if !GetMonitorInfoW(hmonitor, &mut info).as_bool() {
+            return Ok(false);
+        }
+        let mon_w = info.rcMonitor.right - info.rcMonitor.left;
+        let mon_h = info.rcMonitor.bottom - info.rcMonitor.top;
+
+        // Must cover 90%+ of monitor to be considered fullscreen at all
+        let threshold_w = (mon_w * 90) / 100;
+        let threshold_h = (mon_h * 90) / 100;
+        if w < threshold_w || h < threshold_h {
+            return Ok(false);
+        }
+
+        // Distinguish content fullscreen (video/game) from window fullscreen (browser F11, app maximized).
+        // Content fullscreen: WS_POPUP (games, many video players) or borderless (no WS_CAPTION).
+        // Window fullscreen: normal window with caption (browser F11, VS Code fullscreen, etc.).
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if style == 0 {
+            return Ok(false);
+        }
+        let style = style as u32;
+
+        let is_popup = (style & WS_POPUP.0) != 0;
+        let has_caption = (style & WS_CAPTION.0) != 0;
+
+        // Content fullscreen: popup style (common for games/video) or borderless (no title bar)
+        let content_fullscreen = is_popup || !has_caption;
+        Ok(content_fullscreen)
     }
-
-    // Get window rectangle
-    let mut rect = windows::Win32::Foundation::RECT::default();
-    if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
-        return Ok(false);
-    }
-
-    let w = rect.right - rect.left;
-    let h = rect.bottom - rect.top;
-
-    // Must cover 90%+ of monitor to be considered fullscreen at all
-    let threshold_w = (mon_w * 90) / 100;
-    let threshold_h = (mon_h * 90) / 100;
-    if w < threshold_w || h < threshold_h {
-        return Ok(false);
-    }
-
-    // Distinguish content fullscreen (video/game) from window fullscreen (browser F11, app maximized).
-    // Content fullscreen: WS_POPUP (games, many video players) or borderless (no WS_CAPTION).
-    // Window fullscreen: normal window with caption (browser F11, VS Code fullscreen, etc.).
-    let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
-    if style == 0 {
-        return Ok(false);
-    }
-    let style = style as u32;
-
-    let is_popup = (style & WS_POPUP.0) != 0;
-    let has_caption = (style & WS_CAPTION.0) != 0;
-
-    // Content fullscreen: popup style (common for games/video) or borderless (no title bar)
-    let content_fullscreen = is_popup || !has_caption;
-    Ok(content_fullscreen)
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
-fn is_foreground_fullscreen(_window: tauri::Window) -> Result<bool, String> {
+#[tauri::command(async)]
+fn is_foreground_fullscreen() -> Result<bool, String> {
     Ok(false)
 }
 
@@ -873,7 +918,7 @@ struct ForegroundApp {
 /// ("knows what you're working on") privately. Skips our own overlay implicitly —
 /// the pill is a no-activate window, so it rarely becomes foreground.
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_foreground_app() -> ForegroundApp {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
@@ -966,7 +1011,7 @@ struct SystemStats {
 
 /// Returns current CPU% (system-wide) and RAM usage. CPU is the delta since the
 /// previous call, so the first reading after launch reads ~0 until the next poll.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_system_stats() -> SystemStats {
     let mut sys = match SYSTEM_MONITOR.lock() {
         Ok(guard) => guard,
@@ -1070,7 +1115,7 @@ fn repeat_mode_to_string(mode: MediaPlaybackAutoRepeatMode) -> String {
 // =============================================================================
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_media_timeline() -> Result<MediaTimeline, String> {
     let session = get_current_session()?;
     let timeline = session.GetTimelineProperties()
@@ -1095,7 +1140,7 @@ fn get_media_timeline() -> Result<MediaTimeline, String> {
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn seek_media(position_ms: u64) -> Result<(), String> {
     let session = get_current_session()?;
     let max_position_ms = i64::MAX as u64 / 10_000;
@@ -1110,13 +1155,13 @@ fn seek_media(position_ms: u64) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn seek_media(_position_ms: u64) -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_media_playback_info() -> Result<MediaPlaybackInfo, String> {
     let session = get_current_session()?;
     let playback_info = session.GetPlaybackInfo()
@@ -1132,13 +1177,13 @@ fn get_media_playback_info() -> Result<MediaPlaybackInfo, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_media_playback_info() -> Result<MediaPlaybackInfo, String> {
     Err("Media controls not supported on this platform".to_string())
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_toggle_repeat() -> Result<(), String> {
     let session = get_current_session()?;
     let playback_info = session.GetPlaybackInfo()
@@ -1160,13 +1205,13 @@ fn media_toggle_repeat() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_toggle_repeat() -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_toggle_shuffle() -> Result<(), String> {
     let session = get_current_session()?;
     let playback_info = session.GetPlaybackInfo()
@@ -1181,13 +1226,13 @@ fn media_toggle_shuffle() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_toggle_shuffle() -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn pause_other_sessions() -> Result<(), String> {
     let manager = poll_session_manager()?;
     let current_session = manager.GetCurrentSession()
@@ -1214,7 +1259,7 @@ fn pause_other_sessions() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn pause_other_sessions() -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
@@ -1224,7 +1269,7 @@ fn pause_other_sessions() -> Result<(), String> {
 // =============================================================================
 
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn extract_accent_color() -> Result<AccentColorResult, String> {
     let session = get_current_session()?;
 
@@ -1339,14 +1384,14 @@ fn extract_accent_color() -> Result<AccentColorResult, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn extract_accent_color() -> Result<AccentColorResult, String> {
     Err("Accent color extraction not supported on this platform".to_string())
 }
 
 /// Get current media session info (now playing)
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_media_session() -> Result<Option<MediaInfo>, String> {
     // Get session manager
     let manager = poll_session_manager()?;
@@ -1405,14 +1450,14 @@ fn get_media_session() -> Result<Option<MediaInfo>, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_media_session() -> Result<Option<MediaInfo>, String> {
     Ok(None)
 }
 
 /// Play/pause media
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_play_pause() -> Result<(), String> {
     let session = get_current_session()?;
     
@@ -1424,14 +1469,14 @@ fn media_play_pause() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_play_pause() -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
 
 /// Skip to next track
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_next() -> Result<(), String> {
     let session = get_current_session()?;
     
@@ -1443,14 +1488,14 @@ fn media_next() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_next() -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
 
 /// Skip to previous track
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_previous() -> Result<(), String> {
     let session = get_current_session()?;
     
@@ -1462,7 +1507,7 @@ fn media_previous() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn media_previous() -> Result<(), String> {
     Err("Media controls not supported on this platform".to_string())
 }
@@ -1473,12 +1518,10 @@ fn media_previous() -> Result<(), String> {
 
 /// Get system volume
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_system_volume() -> Result<VolumeInfo, String> {
+    ensure_com_initialized();
     unsafe {
-        // Initialize COM
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         // Get device enumerator
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
@@ -1515,15 +1558,14 @@ fn get_system_volume() -> Result<VolumeInfo, String> {
 
 /// Set system volume (0-100)
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn set_system_volume(level: u32) -> Result<(), String> {
     if level > 100 {
         return Err("Volume level must be 0-100".to_string());
     }
-    
+
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1541,18 +1583,17 @@ fn set_system_volume(level: u32) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn set_system_volume(_level: u32) -> Result<(), String> {
     Err("Volume control not supported on this platform".to_string())
 }
 
 /// Toggle mute
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn toggle_mute() -> Result<bool, String> {
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1574,7 +1615,7 @@ fn toggle_mute() -> Result<bool, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn toggle_mute() -> Result<bool, String> {
     Err("Volume control not supported on this platform".to_string())
 }
@@ -1636,11 +1677,10 @@ fn get_device_id(device: &IMMDevice) -> Result<String, String> {
 
 /// List all audio output devices
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1685,11 +1725,10 @@ fn list_audio_devices() -> Result<Vec<AudioDevice>, String> {
 
 /// Get the default audio device
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_default_audio_device() -> Result<AudioDevice, String> {
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1719,11 +1758,10 @@ fn get_default_audio_device() -> Result<AudioDevice, String> {
 
 /// List all audio sessions (apps playing audio)
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn list_audio_sessions() -> Result<Vec<AudioSession>, String> {
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1842,15 +1880,14 @@ fn list_audio_sessions() -> Result<Vec<AudioSession>, String> {
 
 /// Set volume for a specific audio session
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn set_session_volume(process_id: u32, level: f32) -> Result<(), String> {
     if level < 0.0 || level > 1.0 {
         return Err("Volume level must be 0.0 to 1.0".to_string());
     }
-    
+
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1905,11 +1942,10 @@ fn set_session_volume(_process_id: u32, _level: f32) -> Result<(), String> {
 
 /// Mute/unmute a specific audio session
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn set_session_mute(process_id: u32, muted: bool) -> Result<(), String> {
+    ensure_com_initialized();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        
         let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| format!("Failed to create device enumerator: {}", e))?;
         
@@ -1995,19 +2031,25 @@ fn get_primary_physical_monitor() -> Result<PHYSICAL_MONITOR, String> {
             return Err("No physical monitors found".to_string());
         }
         
-        // Get physical monitor handles
+        // Get physical monitor handles; destroy every handle we don't return so
+        // repeated polling can't leak them.
         let mut monitors = vec![PHYSICAL_MONITOR::default(); num_monitors as usize];
         GetPhysicalMonitorsFromHMONITOR(hmonitor, &mut monitors)
             .map_err(|e| format!("Failed to get physical monitors: {}", e))?;
-        
-        Ok(monitors[0])
+
+        let primary = monitors[0];
+        for extra in monitors.iter().skip(1) {
+            let _ = DestroyPhysicalMonitor(extra.hPhysicalMonitor);
+        }
+        Ok(primary)
     }
 }
 
 /// Get system brightness: try WMI (laptops) first via brightness crate, then DDC/CI (external monitors)
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_system_brightness() -> Result<BrightnessInfo, String> {
+    ensure_com_initialized();
     // 1. Try brightness crate first (WMI - works on laptop internal panels)
     for device_result in brightness::blocking::brightness_devices() {
         if let Ok(device) = device_result {
@@ -2075,7 +2117,7 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_system_brightness() -> Result<BrightnessInfo, String> {
     Ok(BrightnessInfo {
         level: 100,
@@ -2087,8 +2129,9 @@ fn get_system_brightness() -> Result<BrightnessInfo, String> {
 
 /// Set system brightness (0-100): try WMI (laptops) first, then DDC/CI (external monitors)
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn set_system_brightness(level: u32) -> Result<(), String> {
+    ensure_com_initialized();
     let level = level.min(100);
 
     // 1. Try brightness crate first (WMI - works on laptop internal panels)
@@ -2104,29 +2147,39 @@ fn set_system_brightness(level: u32) -> Result<(), String> {
     unsafe {
         let monitor = get_primary_physical_monitor()?;
 
-        let mut min_brightness: u32 = 0;
-        let mut current_brightness: u32 = 0;
-        let mut max_brightness: u32 = 0;
+        // Never write a brightness we couldn't validate: if the range query fails
+        // or reports an empty range, bailing out here avoids slamming the panel to
+        // its hardware minimum (near-black screen).
+        let outcome: Result<(), String> = (|| {
+            let mut min_brightness: u32 = 0;
+            let mut current_brightness: u32 = 0;
+            let mut max_brightness: u32 = 0;
 
-        let _ = GetMonitorBrightness(
-            monitor.hPhysicalMonitor,
-            &mut min_brightness,
-            &mut current_brightness,
-            &mut max_brightness,
-        );
+            let range_ok = GetMonitorBrightness(
+                monitor.hPhysicalMonitor,
+                &mut min_brightness,
+                &mut current_brightness,
+                &mut max_brightness,
+            ) != 0;
+            if !range_ok {
+                return Err("Failed to read brightness range - DDC/CI may not be supported".to_string());
+            }
 
-        let range = max_brightness - min_brightness;
-        let actual_level = min_brightness + (level * range) / 100;
+            if max_brightness <= min_brightness {
+                return Err("Monitor reported an invalid brightness range".to_string());
+            }
 
-        let result = SetMonitorBrightness(monitor.hPhysicalMonitor, actual_level);
+            let actual_level = min_brightness + (level * (max_brightness - min_brightness)) / 100;
+
+            if SetMonitorBrightness(monitor.hPhysicalMonitor, actual_level) == 0 {
+                return Err("Failed to set brightness - DDC/CI may not be supported".to_string());
+            }
+            Ok(())
+        })();
 
         let _ = DestroyPhysicalMonitor(monitor.hPhysicalMonitor);
 
-        if result != 0 {
-            Ok(())
-        } else {
-            Err("Failed to set brightness - DDC/CI may not be supported".to_string())
-        }
+        outcome
     }
 }
 
@@ -2292,8 +2345,9 @@ fn subscribe_notification_changed(
 /// Request notification access and check if granted.
 /// Also updates the cached access flag used by get_notifications().
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn check_notification_access() -> Result<bool, String> {
+    ensure_com_initialized();
     let status = poll_notification_access()?;
     let allowed = status == UserNotificationListenerAccessStatus::Allowed;
     NOTIFICATION_ACCESS_GRANTED.store(allowed, Ordering::Relaxed);
@@ -2397,8 +2451,9 @@ fn extract_notification(notif: &UserNotification, idx: usize) -> Option<SystemNo
 /// Get recent notifications.
 /// Uses cached access status to avoid re-polling access on every call.
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn get_notifications() -> Result<Vec<SystemNotification>, String> {
+    ensure_com_initialized();
     if !NOTIFICATION_ACCESS_GRANTED.load(Ordering::Relaxed) {
         return Ok(Vec::new());
     }
@@ -2429,8 +2484,9 @@ fn get_notifications() -> Result<Vec<SystemNotification>, String> {
 /// AppUserModelId (AUMID); we launch it via the shell (explorer shell:AppsFolder\AUMID)
 /// so both UWP and desktop apps (e.g. WhatsApp) are activated correctly.
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn activate_notification(id: u32) -> Result<(), String> {
+    ensure_com_initialized();
     let listener = UserNotificationListener::Current()
         .map_err(|e| format!("Failed to get notification listener: {}", e))?;
 
@@ -2509,8 +2565,9 @@ fn activate_notification(_id: u32) -> Result<(), String> {
 
 /// Activate an app by its AUMID directly (used when notification was already dismissed from Windows).
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn activate_app_by_aumid(aumid: String) -> Result<(), String> {
+    ensure_com_initialized();
     if aumid.is_empty() {
         return Err("AUMID is empty".to_string());
     }
@@ -2563,8 +2620,9 @@ fn activate_app_by_aumid(_aumid: String) -> Result<(), String> {
 
 /// Dismiss a notification by ID
 #[cfg(target_os = "windows")]
-#[tauri::command]
+#[tauri::command(async)]
 fn dismiss_notification(id: u32) -> Result<(), String> {
+    ensure_com_initialized();
     let listener = UserNotificationListener::Current()
         .map_err(|e| format!("Failed to get notification listener: {}", e))?;
     

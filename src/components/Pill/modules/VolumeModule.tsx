@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { VolumeInfo } from "../../../hooks/useVolume";
 import type { BrightnessInfo } from "../../../hooks/useBrightness";
 import type { AudioDevice } from "../../../hooks/useAudioDevices";
@@ -24,6 +24,9 @@ interface VolumeSliderProps {
 export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSliderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [localLevel, setLocalLevel] = useState(volume.level);
+  // Pointer-state ref mirrors isDragging so event handlers (which React
+  // recreates per render) always see the live drag state.
+  const isDraggingRef = useRef(false);
 
   // Sync local level when volume prop changes (from polling) and not dragging
   useEffect(() => {
@@ -35,18 +38,38 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newLevel = parseInt(e.target.value, 10);
     setLocalLevel(newLevel);
-  }, []);
-
-  const handleMouseUp = useCallback(() => {
-    if (isDragging) {
-      onVolumeChange(localLevel);
-      setIsDragging(false);
+    // Keyboard interaction (arrow keys) fires onChange without any pointer
+    // event: commit immediately so keyboard users can actually change volume.
+    if (!isDraggingRef.current) {
+      onVolumeChange(newLevel);
     }
-  }, [isDragging, localLevel, onVolumeChange]);
+  }, [onVolumeChange]);
+
+  const endDrag = useCallback(() => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    onVolumeChange(localLevel);
+  }, [localLevel, onVolumeChange]);
 
   const handleMouseDown = useCallback(() => {
+    isDraggingRef.current = true;
     setIsDragging(true);
   }, []);
+
+  // A range input keeps pointer capture while dragging, so the release can land
+  // outside the element. Listen on the window rather than using onMouseLeave,
+  // which fires whenever the cursor crosses the thin track mid-drag and would
+  // commit early — then every later move would fire its own backend call.
+  useEffect(() => {
+    if (!isDragging) return;
+    window.addEventListener("mouseup", endDrag);
+    window.addEventListener("touchend", endDrag);
+    return () => {
+      window.removeEventListener("mouseup", endDrag);
+      window.removeEventListener("touchend", endDrag);
+    };
+  }, [isDragging, endDrag]);
 
   const displayLevel = isDragging ? localLevel : volume.level;
 
@@ -97,8 +120,9 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
           value={displayLevel}
           onChange={handleChange}
           onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
-          onTouchEnd={handleMouseUp}
+          onMouseUp={endDrag}
+          onTouchEnd={endDrag}
+          onBlur={endDrag}
           aria-label="Volume level"
           aria-valuemin={0}
           aria-valuemax={100}

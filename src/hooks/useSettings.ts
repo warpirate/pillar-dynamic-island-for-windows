@@ -132,12 +132,19 @@ export function useSettings(): UseSettingsReturn {
   settingsRef.current = settings;
 
   const load = useCallback(async () => {
-    const loaded = await tauriInvoke<AppSettings>("load_settings");
-    if (loaded) {
-      const merged = deepMerge(SETTINGS_DEFAULTS, loaded as DeepPartial<AppSettings>);
-      setSettings(merged);
+    try {
+      const loaded = await tauriInvoke<AppSettings>("load_settings");
+      if (loaded) {
+        const merged = deepMerge(SETTINGS_DEFAULTS, loaded as DeepPartial<AppSettings>);
+        setSettings(merged);
+      }
+    } catch (e) {
+      // Backend hiccup: degrade to defaults rather than leaving the UI stuck
+      // on a skeleton forever.
+      console.warn("[useSettings] Failed to load settings; using defaults", e);
+    } finally {
+      setIsLoaded(true);
     }
-    setIsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -146,8 +153,17 @@ export function useSettings(): UseSettingsReturn {
 
   const update = useCallback(async (patch: DeepPartial<AppSettings>) => {
     const merged = deepMerge(settingsRef.current, patch);
+    const previous = settingsRef.current;
     setSettings(merged);
-    await tauriInvoke("save_settings", { settings: merged });
+    try {
+      await tauriInvoke("save_settings", { settings: merged });
+    } catch (e) {
+      // Persist failed: revert in-memory state so the UI doesn't claim a save
+      // that will silently vanish on next launch.
+      console.warn("[useSettings] Failed to save settings; reverting", e);
+      setSettings(previous);
+      throw e;
+    }
   }, []);
 
   return { settings, isLoaded, update, reload: load };

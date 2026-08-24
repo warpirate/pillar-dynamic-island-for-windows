@@ -22,11 +22,17 @@ export function useAutoStart(): UseAutoStartReturn {
 
   // Check autostart status
   const checkStatus = useCallback(async () => {
-    const result = await tauriInvoke<boolean>("check_autostart_enabled");
-    if (result !== null) {
-      setIsEnabled(result);
+    try {
+      const result = await tauriInvoke<boolean>("check_autostart_enabled");
+      if (result !== null) {
+        setIsEnabled(result);
+      }
+    } catch (e) {
+      // Backend unavailable: leave current state rather than spinning forever.
+      console.warn("[useAutoStart] Failed to check autostart status", e);
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -37,14 +43,20 @@ export function useAutoStart(): UseAutoStartReturn {
   // Enable or disable autostart — after calling backend, re-check so UI reflects actual state
   const setEnabled = useCallback(async (enabled: boolean) => {
     setIsLoading(true);
-    await tauriInvoke("set_autostart_enabled", { enabled });
-    const actual = await tauriInvoke<boolean>("check_autostart_enabled");
-    if (actual !== null) {
-      setIsEnabled(actual);
-    } else {
-      setIsEnabled(enabled);
+    try {
+      await tauriInvoke("set_autostart_enabled", { enabled });
+      const actual = await tauriInvoke<boolean>("check_autostart_enabled");
+      if (actual !== null) {
+        setIsEnabled(actual);
+      } else {
+        setIsEnabled(enabled);
+      }
+    } catch (e) {
+      console.warn("[useAutoStart] Failed to change autostart setting", e);
+      throw e;
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
   // Initial check on mount

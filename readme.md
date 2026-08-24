@@ -110,15 +110,15 @@ The installers are written to `src-tauri/target/release/bundle/` (`nsis/` and `m
 
 ### Prism AI (Groq) setup
 
-Prism uses the Groq API from the Tauri backend. Set the key **in the same terminal** you run the app
-(or before `npm run tauri build` to embed it in the `.exe`):
+Prism uses the Groq API from the Tauri backend. The key is read at **runtime only** — it is never
+baked into the `.exe`, so set it in the same terminal (or environment) you run the app from:
 
 ```powershell
 $env:GROQ_API_KEY = "your_groq_api_key_here"
 npm run tauri dev
 ```
 
-If the key is missing, Prism shows: *"GROQ_API_KEY is not set. Set it before building or running PILLAR."*
+If the key is missing, Prism shows: *"GROQ_API_KEY is not set. Set it before running PILLAR."*
 
 ## 📁 Project structure
 

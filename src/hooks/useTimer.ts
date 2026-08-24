@@ -100,10 +100,16 @@ export function useTimer(
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onTimerUpdateRef = useRef(onTimerUpdate);
   const onTimerCompleteRef = useRef(onTimerComplete);
-  
+  // Wall-clock deadline (ms since epoch) for a running, unpaused timer.
+  // Computing remaining time from this anchor instead of decrementing per tick
+  // keeps the countdown accurate even when WebView2 throttles background timers.
+  const endsAtRef = useRef<number | null>(null);
+
   // Keep refs updated
   onTimerUpdateRef.current = onTimerUpdate;
   onTimerCompleteRef.current = onTimerComplete;
+  const timerRef = useRef(timer);
+  timerRef.current = timer;
 
   // Cleanup interval on unmount
   useEffect(() => {
@@ -151,10 +157,12 @@ export function useTimer(
 
   const startTimer = useCallback((preset: TimerPreset | { label: string; minutes: number }) => {
     clearTimerInterval();
-    
+
     const minutes = "workMinutes" in preset ? preset.workMinutes : preset.minutes;
-    const totalSeconds = minutes * 60;
+    const totalSeconds = Math.max(1, Math.round(minutes * 60));
     const label = preset.label;
+
+    endsAtRef.current = Date.now() + totalSeconds * 1000;
 
     setTimer({
       isActive: true,
@@ -165,43 +173,55 @@ export function useTimer(
       isComplete: false,
     });
 
-    intervalRef.current = setInterval(() => {
-      setTimer(prev => {
-        if (prev.isPaused || !prev.isActive) return prev;
-        
-        const newRemaining = prev.remainingSeconds - 1;
-        
-        if (newRemaining <= 0) {
-          clearTimerInterval();
-          setStats((prevStats) => ({
-            sessionsCompleted: prevStats.sessionsCompleted + 1,
-            totalFocusSeconds: prevStats.totalFocusSeconds + prev.totalSeconds,
-            lastCompletedAt: Date.now(),
-            byCategory: {
-              ...prevStats.byCategory,
-              [selectedCategory]: {
-                sessions: (prevStats.byCategory[selectedCategory]?.sessions ?? 0) + 1,
-                focusSeconds: (prevStats.byCategory[selectedCategory]?.focusSeconds ?? 0) + prev.totalSeconds,
-              },
-            },
-          }));
-          if (onTimerCompleteRef.current) {
-            onTimerCompleteRef.current(prev.label);
-          }
-          return {
-            ...prev,
-            remainingSeconds: 0,
-            isActive: false,
-            isComplete: true,
-          };
-        }
-        
-        return {
-          ...prev,
-          remainingSeconds: newRemaining,
-        };
+    const finish = () => {
+      clearTimerInterval();
+      endsAtRef.current = null;
+      setStats((prevStats) => ({
+        sessionsCompleted: prevStats.sessionsCompleted + 1,
+        totalFocusSeconds: prevStats.totalFocusSeconds + totalSeconds,
+        lastCompletedAt: Date.now(),
+        byCategory: {
+          ...prevStats.byCategory,
+          [selectedCategory]: {
+            sessions: (prevStats.byCategory[selectedCategory]?.sessions ?? 0) + 1,
+            focusSeconds: (prevStats.byCategory[selectedCategory]?.focusSeconds ?? 0) + totalSeconds,
+          },
+        },
+      }));
+      if (onTimerCompleteRef.current) {
+        onTimerCompleteRef.current(label);
+      }
+      setTimer({
+        isActive: false,
+        isPaused: false,
+        label,
+        totalSeconds,
+        remainingSeconds: 0,
+        isComplete: true,
       });
-    }, 1000);
+    };
+
+    // 250ms cadence against the wall-clock deadline: cheap, and immune to
+    // interval throttling (remaining time is derived from Date.now(), not
+    // accumulated ticks).
+    const tick = () => {
+      const endsAt = endsAtRef.current;
+      if (endsAt === null) return;
+      const remainingMs = endsAt - Date.now();
+      if (remainingMs <= 0) {
+        finish();
+        return;
+      }
+      const remaining = Math.max(1, Math.ceil(remainingMs / 1000));
+      setTimer(prev =>
+        prev.isActive && !prev.isPaused && prev.remainingSeconds !== remaining
+          ? { ...prev, remainingSeconds: remaining }
+          : prev
+      );
+    };
+
+    intervalRef.current = setInterval(tick, 250);
+    tick();
   }, [clearTimerInterval, selectedCategory]);
 
   const startCustomTimer = useCallback((label: string, minutes: number) => {
@@ -209,15 +229,21 @@ export function useTimer(
   }, [startTimer]);
 
   const pauseTimer = useCallback(() => {
-    setTimer(prev => ({ ...prev, isPaused: true }));
+    if (endsAtRef.current === null) return; // not running, or already paused
+    endsAtRef.current = null;
+    setTimer(prev => (prev.isPaused ? prev : { ...prev, isPaused: true }));
   }, []);
 
   const resumeTimer = useCallback(() => {
+    const current = timerRef.current;
+    if (!current.isActive || !current.isPaused || current.remainingSeconds <= 0) return;
+    endsAtRef.current = Date.now() + current.remainingSeconds * 1000;
     setTimer(prev => ({ ...prev, isPaused: false }));
   }, []);
 
   const stopTimer = useCallback(() => {
     clearTimerInterval();
+    endsAtRef.current = null;
     setTimer({
       isActive: false,
       isPaused: false,
