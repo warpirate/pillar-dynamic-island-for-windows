@@ -1,6 +1,6 @@
 [package]
 name = "pillar"
-version = "0.1.3"
+version = "0.1.4"
 description = "Dynamic Island-style system overlay for Windows"
 authors = ["you"]
 edition = "2021"
