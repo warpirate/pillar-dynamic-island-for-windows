@@ -10,6 +10,8 @@ import type { LayoutSettingsData } from "../../../hooks/useSettings";
 import { PerAppMixer } from "./PerAppMixer";
 import { AppearanceModule } from "./AppearanceModule";
 import { microInteractions, PILL_DURATION_FAST, PILL_DURATION_MEDIUM } from "../animations";
+import { fireAndForget } from "../../../lib/fireAndForget";
+import { useThrottledCommit } from "../../../hooks/useThrottledCommit";
 
 // =============================================================================
 // Volume Slider
@@ -35,22 +37,26 @@ export function VolumeSlider({ volume, onVolumeChange, onMuteToggle }: VolumeSli
     }
   }, [volume.level, isDragging]);
 
+  const { send: sendLevel, sendNow: sendLevelNow } = useThrottledCommit(onVolumeChange);
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newLevel = parseInt(e.target.value, 10);
     setLocalLevel(newLevel);
     // Keyboard interaction (arrow keys) fires onChange without any pointer
-    // event: commit immediately so keyboard users can actually change volume.
+    // event: commit as we go so keyboard users can actually change volume.
+    // Throttled, because a held arrow key auto-repeats far faster than the
+    // backend can service it.
     if (!isDraggingRef.current) {
-      onVolumeChange(newLevel);
+      sendLevel(newLevel);
     }
-  }, [onVolumeChange]);
+  }, [sendLevel]);
 
   const endDrag = useCallback(() => {
     if (!isDraggingRef.current) return;
     isDraggingRef.current = false;
     setIsDragging(false);
-    onVolumeChange(localLevel);
-  }, [localLevel, onVolumeChange]);
+    sendLevelNow(localLevel);
+  }, [localLevel, sendLevelNow]);
 
   const handleMouseDown = useCallback(() => {
     isDraggingRef.current = true;
@@ -159,19 +165,23 @@ export function BrightnessSlider({ brightness, onBrightnessChange }: BrightnessS
     }
   }, [brightness.level, isDragging]);
 
+  const { send: sendBrightness, sendNow: sendBrightnessNow } = useThrottledCommit(onBrightnessChange);
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newLevel = parseInt(e.target.value, 10);
     setLocalLevel(newLevel);
-    // Always update immediately for responsive feedback
-    onBrightnessChange(newLevel);
-  }, [onBrightnessChange]);
+    // Commit as the slider moves for responsive feedback, but throttled: a DDC/CI
+    // write takes far longer than the gap between pointer samples, so one call
+    // per change event would queue writes faster than the monitor drains them.
+    sendBrightness(newLevel);
+  }, [sendBrightness]);
 
   const handleMouseUp = useCallback(() => {
     if (isDragging) {
-      onBrightnessChange(localLevel);
+      sendBrightnessNow(localLevel);
       setIsDragging(false);
     }
-  }, [isDragging, localLevel, onBrightnessChange]);
+  }, [isDragging, localLevel, sendBrightnessNow]);
 
   const handleMouseDown = useCallback(() => {
     setIsDragging(true);
@@ -445,8 +455,10 @@ interface AppearanceControls {
   isEditing: boolean;
   startEditing: () => void;
   updateDraft: (changes: Partial<AppearanceSettings>) => void;
-  save: () => void;
-  reset: () => void;
+  // These persist through the Rust backend and reject if the write fails; the
+  // signature used to claim `void`, which is what hid the unhandled rejection.
+  save: () => Promise<void>;
+  reset: () => Promise<void>;
   discard: () => void;
 }
 
@@ -510,8 +522,8 @@ export function QuickSettings({
         animationSpeed={motionSettings?.animationSpeed}
         onAnimationSpeedChange={motionSettings?.onAnimationSpeedChange}
         onUpdate={appearance.updateDraft}
-        onSave={() => { appearance.save(); setView("main"); }}
-        onReset={() => { appearance.reset(); setView("main"); }}
+        onSave={() => { fireAndForget(appearance.save(), "appearance save"); setView("main"); }}
+        onReset={() => { fireAndForget(appearance.reset(), "appearance reset"); setView("main"); }}
         onBack={() => { appearance.discard(); setView("main"); }}
       />
     );

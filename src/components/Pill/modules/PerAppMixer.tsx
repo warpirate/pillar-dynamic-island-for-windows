@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { AudioSession } from "../../../hooks/usePerAppMixer";
 import { microInteractions } from "../animations";
+import { useThrottledCommit } from "../../../hooks/useThrottledCommit";
 
 // =============================================================================
 // Per-App Volume Slider
@@ -19,22 +20,29 @@ function AppVolumeSlider({ session, onVolumeChange, onMuteToggle }: AppVolumeSli
   // Pointer-state ref mirrors isDragging so handlers always see live state.
   const isDraggingRef = useRef(false);
 
+  const commitVolume = useCallback(
+    (value: number) => onVolumeChange(session.processId, value),
+    [onVolumeChange, session.processId]
+  );
+  const { send: sendVolume, sendNow: sendVolumeNow } = useThrottledCommit(commitVolume);
+
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newVolume = parseInt(e.target.value, 10) / 100;
     setLocalVolume(newVolume);
-    // Keyboard interaction fires onChange without pointer events: commit
-    // immediately so keyboard users can adjust per-app volume.
+    // Keyboard interaction fires onChange without pointer events: commit as we
+    // go so keyboard users can adjust per-app volume. Throttled, because a held
+    // arrow key auto-repeats far faster than the backend can service it.
     if (!isDraggingRef.current) {
-      onVolumeChange(session.processId, newVolume);
+      sendVolume(newVolume);
     }
-  }, [onVolumeChange, session.processId]);
+  }, [sendVolume]);
 
   const endDrag = useCallback(() => {
     if (!isDraggingRef.current) return;
     isDraggingRef.current = false;
     setIsDragging(false);
-    onVolumeChange(session.processId, localVolume);
-  }, [localVolume, onVolumeChange, session.processId]);
+    sendVolumeNow(localVolume);
+  }, [localVolume, sendVolumeNow]);
 
   const handleMouseDown = useCallback(() => {
     isDraggingRef.current = true;

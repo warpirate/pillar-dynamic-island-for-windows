@@ -30,6 +30,7 @@ import { SystemMonitor } from "./modules/SystemMonitor";
 import { StateIndicators, TimerMiniProgress } from "./indicators/StateIndicators";
 import { createFocusTrap } from "../../utils/focusTrap";
 import { tauriInvoke } from "../../lib/tauri";
+import { fireAndForget } from "../../lib/fireAndForget";
 import { platformApi } from "../../lib/platform";
 import type { PrismAction } from "../../types/prism";
 import type { WorkflowActionEnvelope } from "../../types/workflows";
@@ -1504,13 +1505,14 @@ export function Pill() {
                       onSessionVolumeChange={setSessionVolume}
                       onSessionMuteToggle={setSessionMute}
                       autoStartEnabled={autoStartEnabled}
-                      onAutoStartToggle={() => setAutoStartEnabled(!autoStartEnabled)}
+                      onAutoStartToggle={() => fireAndForget(setAutoStartEnabled(!autoStartEnabled), "autostart toggle")}
                       layoutSettings={appSettings.layout}
-                      onLayoutChange={(layoutPatch) => updateSettings({ layout: layoutPatch })}
+                      onLayoutChange={(layoutPatch) => fireAndForget(updateSettings({ layout: layoutPatch }), "layout change")}
                       appearance={appearance}
                       motionSettings={{
                         animationSpeed: appSettings.motion.animation_speed,
-                        onAnimationSpeedChange: (speed) => updateSettings({ motion: { animation_speed: speed } }),
+                        onAnimationSpeedChange: (speed) =>
+                          fireAndForget(updateSettings({ motion: { animation_speed: speed } }), "animation speed change"),
                       }}
                     />
                   </motion.div>
